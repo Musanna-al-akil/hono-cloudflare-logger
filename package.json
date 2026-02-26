@@ -14,15 +14,15 @@
     "structured-logging",
     "syslog"
   ],
-  "homepage": "https://github.com/musanna/hono-cloudflare-logger#readme",
+  "homepage": "https://github.com/Musanna-al-akil/hono-cloudflare-logger#readme",
   "bugs": {
-    "url": "https://github.com/musanna/hono-cloudflare-logger/issues"
+    "url": "https://github.com/Musanna-al-akil/hono-cloudflare-logger/issues"
   },
   "license": "MIT",
-  "author": "musanna",
+  "author": "musanna-al-akil",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/musanna/hono-cloudflare-logger.git"
+    "url": "git+https://github.com/Musanna-al-akil/hono-cloudflare-logger.git"
   },
   "files": [
     "LICENSE",
