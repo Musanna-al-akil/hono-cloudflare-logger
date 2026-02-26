@@ -8,6 +8,7 @@ export { Logger } from "hono-cloudflare-logger";
 export type {
   SyslogLevel,
   LoggerConfig,
+  LogContext,
   LogEntry,
   LoggerVariables,
   AutoLoggingMode,
@@ -27,6 +28,7 @@ app.use("*", logger({ autoLogging: "access" }));
 
 `LoggerConfig.header` defaults to `false` to avoid request-header capture costs. Set
 `header: true` for full headers, or pass an allowlist array for selected headers.
+Trace ID extraction checks `traceHeader` first, then falls back to `cf-ray`.
 
 ### Context access
 
@@ -47,6 +49,7 @@ Serialized output order is deterministic and begins with `level`, `msg`, then `t
 - `warning(msg, data?)`
 
 By default, `data` is placed under `trace` in the output entry.
+When using `{ dataPlacement: 'flat' }`, reserved keys (`level`, `msg`, `time`, `trace`) are ignored to keep canonical output fields stable.
 
 ### Error methods
 

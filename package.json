@@ -1,7 +1,7 @@
 {
   "name": "hono-cloudflare-logger",
   "version": "0.1.0-beta.0",
-  "description": "cloudflare workers-first structured logging middleware for Hono.",
+  "description": "cloudflare-workers first structured logging middleware for Hono.",
   "keywords": [
     "cloudflare-log",
     "cloudflare-logger",
@@ -22,7 +22,7 @@
   "author": "musanna",
   "repository": {
     "type": "git",
-    "url": "https://github.com/musanna/hono-cloudflare-logger.git"
+    "url": "git+https://github.com/musanna/hono-cloudflare-logger.git"
   },
   "files": [
     "LICENSE",
@@ -48,6 +48,9 @@
     "lint": "npm run typecheck && oxlint . --deny-warnings",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "pack:dry-run": "env npm_config_cache=/tmp/npm-cache npm pack --dry-run",
+    "prepublish:check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run pack:dry-run",
+    "prepublishOnly": "npm run prepublish:check",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"

@@ -11,6 +11,7 @@ This project follows [Changesets](https://github.com/changesets/changesets) for 
 ### Initial beta launch
 
 - Introduced Cloudflare Workers-first structured logging middleware for Hono.
-- Added formatter support for JSON, NDJSON, and syslog-style output.
-- Added request/response metadata controls and redaction hooks.
+- Added NDJSON output with newline-terminated log entries and severity-based console routing.
+- Added request metadata controls (`trace_id`, allowlisted `req.cf`, optional request headers).
+- Added deep key redaction hooks for nested objects and arrays.
 - Added minimal and advanced usage examples plus test coverage.

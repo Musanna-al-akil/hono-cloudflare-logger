@@ -1,6 +1,6 @@
 # hono-cloudflare-logger
 
-Workers-first, zero-runtime-dependency logging middleware for [Hono](https://hono.dev/) with newline-delimited JSON (NDJSON) output.
+cloudflare-workers first, zero-runtime-dependency structured logging middleware for [Hono](https://hono.dev/) with newline-delimited JSON (NDJSON) output.
 
 ## Features
 
@@ -32,7 +32,11 @@ Stable releases are published under the default `latest` dist-tag, while prerele
 npm install hono-cloudflare-logger@beta
 ```
 
-For beta publishing steps, see [docs/publishing.md#beta-prereleases](docs/publishing.md#beta-prereleases).
+For prerelease versions (such as `0.1.0-beta.0`), publish with an explicit tag:
+
+```bash
+npm publish --tag beta
+```
 
 ## Quick Start
 
@@ -125,7 +129,6 @@ Each output line is NDJSON with newline suffix:
 - [API Reference](docs/api.md)
 - [Configuration Guide](docs/configuration.md)
 - [Recipes](docs/recipes.md)
-- [Publishing](docs/publishing.md)
 
 ## Examples
 
@@ -141,9 +144,12 @@ npm run format:check
 npm run lint
 npm run test
 npm run build
+npm run prepublish:check
 ```
 
 ## Release
+
+Stable release (`latest`):
 
 ```bash
 npm run changeset
@@ -151,4 +157,10 @@ npm run version-packages
 npm run release
 ```
 
-For CI-based release flow, see [docs/publishing.md](docs/publishing.md).
+Beta prerelease (`beta`):
+
+```bash
+npm run changeset
+npm run version-packages
+npm publish --tag beta
+```
