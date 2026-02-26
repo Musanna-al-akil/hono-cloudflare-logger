@@ -1,0 +1,16 @@
+{
+  "name": "hono-cloudflare-logger-example-minimal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "^4.9.7",
+    "hono-cloudflare-logger": "file:../.."
+  },
+  "devDependencies": {
+    "wrangler": "^4.4.0"
+  }
+}

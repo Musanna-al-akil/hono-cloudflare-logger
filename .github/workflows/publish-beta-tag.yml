@@ -1,0 +1,62 @@
+name: Publish Beta Tag
+
+on:
+  push:
+    tags:
+      - "v*-beta.*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate beta tag and package version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          node -e "const fs=require('fs');
+          const tag=process.env.TAG_NAME;
+          if(!tag||!tag.startsWith('v')){console.error('Tag must start with v.');process.exit(1);}
+          const version=tag.slice(1);
+          const prereleaseSemver=/^\\d+\\.\\d+\\.\\d+-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*$/;
+          if(!prereleaseSemver.test(version)){console.error('Tag must be a semver prerelease version.');process.exit(1);}
+          const prereleasePart=version.split('-')[1]||'';
+          if(!prereleasePart.startsWith('beta.')){console.error('Only beta prerelease tags are allowed.');process.exit(1);}
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+          if(pkg.version!==version){console.error('Tag version does not match package.json version.');process.exit(1);}
+          console.log('Validated beta tag '+tag+' for package version '+pkg.version);"
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        run: npm pack
+
+      - name: Publish beta
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --tag beta --access public
