@@ -1,5 +1,5 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript"],
+  "plugins": ["typescript", "oxc", "import", "unicorn", "vitest"],
   "ignorePatterns": ["dist/**", "node_modules/**", ".changeset/**"]
 }

@@ -45,7 +45,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "npm run typecheck && oxlint . --deny-warnings",
+    "lint": "npm run format:check && npm run typecheck && oxlint . --deny-warnings",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "pack:dry-run": "env npm_config_cache=/tmp/npm-cache npm pack --dry-run",

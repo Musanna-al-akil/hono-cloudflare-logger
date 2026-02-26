@@ -147,6 +147,12 @@ npm run build
 npm run prepublish:check
 ```
 
+## Formatting & Linting
+
+- VS Code auto-formats on save with `oxfmt` when the Oxc extension is installed.
+- `npm run lint` now gates on formatting (`npm run format:check`) before type-checking and linting.
+- If lint fails due to formatting drift, run `npm run format` to fix it.
+
 ## Release
 
 Stable release (`latest`):
