@@ -1,5 +1,5 @@
-import { isErrorLevel } from "./levels";
-import type { LogEntry } from "./types";
+import { isErrorLevel } from "./levels.ts";
+import type { LogEntry } from "./types.ts";
 
 const FALLBACK_LINE = '{"level":"error","msg":"Logger failed to serialize object"}\n';
 

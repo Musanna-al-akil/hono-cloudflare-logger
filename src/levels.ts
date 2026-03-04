@@ -1,4 +1,4 @@
-import type { SyslogLevel } from "./types";
+import type { SyslogLevel } from "./types.ts";
 
 export const SYSLOG_LEVELS: readonly SyslogLevel[] = [
   "debug",

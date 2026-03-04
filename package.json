@@ -1,6 +1,6 @@
 {
   "name": "hono-cloudflare-logger",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "cloudflare-workers first structured logging middleware for Hono.",
   "keywords": [
     "cloudflare-log",

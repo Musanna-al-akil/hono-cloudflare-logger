@@ -24,6 +24,16 @@ cloudflare-workers first, zero-runtime-dependency structured logging middleware 
 npm install hono hono-cloudflare-logger
 ```
 
+## Install From JSR
+
+```bash
+deno add jsr:@musanna/hono-cloudflare-logger
+```
+
+```bash
+npx jsr add @musanna/hono-cloudflare-logger
+```
+
 ## Beta Releases
 
 Stable releases are published under the default `latest` dist-tag, while prerelease builds are published under the `beta` dist-tag.
@@ -155,6 +165,11 @@ npm run prepublish:check
 
 ## Release
 
+This project publishes to both npm and JSR:
+
+- npm publishes built artifacts from `dist`
+- JSR publishes source TypeScript from `src`
+
 Stable release (`latest`):
 
 ```bash
@@ -169,4 +184,11 @@ Beta prerelease (`beta`):
 npm run changeset
 npm run version-packages
 npm publish --tag beta
+```
+
+JSR publish (tag-driven GitHub Action using `JSR_TOKEN` secret):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```

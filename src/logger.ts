@@ -1,7 +1,7 @@
-import { DEFAULT_LEVEL, getLevelPriority, shouldLogPriority } from "./levels";
-import { redactDeep } from "./redact";
-import { writeLogEntry } from "./serialize";
-import type { LogContext, LogEntry, RequestMetadata, SyslogLevel } from "./types";
+import { DEFAULT_LEVEL, getLevelPriority, shouldLogPriority } from "./levels.ts";
+import { redactDeep } from "./redact.ts";
+import { writeLogEntry } from "./serialize.ts";
+import type { LogContext, LogEntry, RequestMetadata, SyslogLevel } from "./types.ts";
 
 export type DataPlacement = "trace" | "flat";
 

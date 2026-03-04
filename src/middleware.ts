@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
-import { DEFAULT_LEVEL } from "./levels";
-import { Logger } from "./logger";
-import type { LoggerConfig, RequestMetadata } from "./types";
+import { DEFAULT_LEVEL } from "./levels.ts";
+import { Logger } from "./logger.ts";
+import type { LoggerConfig, RequestMetadata } from "./types.ts";
 
 const DEFAULT_TRACE_HEADER = "X-Request-Id";
 const DEFAULT_AUTO_LOGGING = "silent";

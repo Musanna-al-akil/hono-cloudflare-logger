@@ -1,0 +1,56 @@
+name: Publish JSR Tag
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-jsr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate tag version and manifest versions
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          node -e "const fs=require('fs');
+          const tag=process.env.TAG_NAME;
+          if(!tag||!tag.startsWith('v')){console.error('Tag must start with v.');process.exit(1);}
+          const version=tag.slice(1);
+          const semver=/^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$/;
+          if(!semver.test(version)){console.error('Tag must be a semver version.');process.exit(1);}
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+          const jsr=JSON.parse(fs.readFileSync('jsr.json','utf8'));
+          if(pkg.version!==version){console.error('Tag version does not match package.json version.');process.exit(1);}
+          if(jsr.version!==version){console.error('Tag version does not match jsr.json version.');process.exit(1);}
+          if(pkg.version!==jsr.version){console.error('package.json and jsr.json versions must match.');process.exit(1);}
+          console.log('Validated tag '+tag+' for package version '+version);"
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Publish to JSR
+        env:
+          JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
+        run: npx jsr publish

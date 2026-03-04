@@ -1,5 +1,5 @@
-export { Logger } from "./logger";
-export { logger } from "./middleware";
+export { Logger } from "./logger.ts";
+export { logger } from "./middleware.ts";
 export type {
   AutoLoggingMode,
   ErrorMetadata,
@@ -9,4 +9,4 @@ export type {
   LoggerVariables,
   RequestMetadata,
   SyslogLevel,
-} from "./types";
+} from "./types.ts";
