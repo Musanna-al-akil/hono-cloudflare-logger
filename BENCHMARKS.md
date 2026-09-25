@@ -98,8 +98,8 @@ Minified + gzip, with `hono` external (`npm run size`):
 
 | Entry                            | 0.1.0-beta.1 |   0.2.0 |  Budget |
 | -------------------------------- | -----------: | ------: | ------: |
-| `hono-cloudflare-logger`         |      1,615 B | 4,737 B | 5,120 B |
-| `hono-cloudflare-logger/context` |            — | 3,313 B | 4,096 B |
+| `hono-cloudflare-logger`         |      1,615 B | 4,780 B | 5,120 B |
+| `hono-cloudflare-logger/context` |            — | 3,315 B | 4,096 B |
 
 `./context` shares a chunk with the root entry, so importing both costs little
 more than the root alone. The growth comes from the new features: error cause
