@@ -126,8 +126,24 @@ export interface LoggerConfig {
   sink?: LogSink | LogSinkObject;
   /** Add an ISO-8601 `time` field. Workers Logs also timestamps every event. Default: `true`. */
   timestamp?: boolean;
-  /** Primary header used to extract `trace_id`. Falls back to `cf-ray`. Default: `X-Request-Id`. */
-  traceHeader?: string;
+  /**
+   * Header read for `trace_id`, or `false` to skip it. The id set by Hono's
+   * `requestId()` middleware wins; then this header, the W3C `traceparent`
+   * trace-id, `cf-ray`, and finally a generated id. Default: `x-request-id`.
+   */
+  traceHeader?: string | false;
+  /** Use the trace-id of a W3C `traceparent` header. Default: `true`. */
+  traceparent?: boolean;
+  /**
+   * Generates a trace id when no header provides one, or `false` to omit
+   * `trace_id`. Default: `crypto.randomUUID`.
+   */
+  generateTraceId?: false | (() => string);
+  /**
+   * Response header that echoes the trace id (e.g. `x-request-id`), or
+   * `false`. An existing header on the response is left untouched. Default: `false`.
+   */
+  responseHeader?: string | false;
   /** Automatic request logging mode. Default: `silent`. */
   autoLogging?: AutoLoggingMode;
   /** Cloudflare `request.cf` keys to include under `req.cf`. Default: `[]`. */

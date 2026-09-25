@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { requestId } from "hono/request-id";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/middleware";
 import type { LoggerVariables } from "../../src/types";
@@ -75,7 +76,7 @@ describe("logger middleware", () => {
     expect(onlyEntry(spies).trace_id).toBe("ray-123");
   });
 
-  it("omits trace_id when no headers are available", async () => {
+  it("generates a trace id when no header provides one", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
     app.use("*", logger());
     app.get("/no-trace", (c) => {
@@ -85,7 +86,128 @@ describe("logger middleware", () => {
 
     await app.request(createRequest("/no-trace"));
 
+    expect(onlyEntry(spies).trace_id).toMatch(
+      /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[\da-f]{4}-[\da-f]{12}$/,
+    );
+  });
+
+  it("omits trace_id when generation is disabled and no header is present", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ generateTraceId: false }));
+    app.get("/no-trace", (c) => {
+      c.get("logger").info("no trace");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/no-trace"));
+
     expect(onlyEntry(spies)).not.toHaveProperty("trace_id");
+  });
+
+  it("uses a custom trace id generator", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ generateTraceId: () => "custom-id" }));
+    app.get("/custom", (c) => {
+      c.get("logger").info("custom");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/custom"));
+
+    expect(onlyEntry(spies).trace_id).toBe("custom-id");
+  });
+
+  it("resolves trace ids in precedence order", async () => {
+    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ generateTraceId: () => "generated" }));
+    app.get("*", (c) => {
+      c.get("logger").info("precedence");
+      return c.text("ok");
+    });
+
+    const cases: Array<[Record<string, string>, string]> = [
+      [{ "x-request-id": "header", traceparent, "cf-ray": "ray" }, "header"],
+      [
+        { "x-request-id": "has space", traceparent, "cf-ray": "ray" },
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+      ],
+      [{ traceparent: "invalid", "cf-ray": "ray" }, "ray"],
+      [{}, "generated"],
+    ];
+    for (const [headers] of cases) {
+      await app.request(createRequest("/p", { headers }));
+    }
+
+    expect(loggedEntries(spies).map((entry) => entry.trace_id)).toEqual(
+      cases.map(([, expected]) => expected),
+    );
+  });
+
+  it("can skip the trace header and traceparent", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ traceHeader: false, traceparent: false }));
+    app.get("*", (c) => {
+      c.get("logger").info("skip");
+      return c.text("ok");
+    });
+
+    await app.request(
+      createRequest("/s", {
+        headers: {
+          "x-request-id": "header",
+          traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+          "cf-ray": "ray",
+        },
+      }),
+    );
+
+    expect(onlyEntry(spies).trace_id).toBe("ray");
+  });
+
+  it("reuses the id from Hono's requestId middleware", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", requestId({ generator: () => "from-request-id" }));
+    app.use("*", logger());
+    app.get("*", (c) => {
+      c.get("logger").info("request-id");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/r", { headers: { "cf-ray": "ray" } }));
+
+    expect(onlyEntry(spies).trace_id).toBe("from-request-id");
+  });
+
+  it("exposes the trace id on the logger", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger());
+    app.get("*", (c) => c.text(c.get("logger").traceId ?? "none"));
+
+    const response = await app.request(createRequest("/t", { headers: { "x-request-id": "abc" } }));
+
+    expect(await response.text()).toBe("abc");
+    expect(loggedCalls(spies)).toHaveLength(0);
+  });
+
+  it("echoes the trace id in a response header without overwriting one", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ responseHeader: "x-request-id", generateTraceId: () => "gen-1" }));
+    app.get("/plain", (c) => c.text("ok"));
+    app.get("/raw", () => new Response("raw"));
+    app.get("/own", (c) => {
+      c.header("x-request-id", "handler-set");
+      return c.text("ok");
+    });
+
+    const plain = await app.request(createRequest("/plain"));
+    const raw = await app.request(createRequest("/raw", { headers: { "x-request-id": "in-1" } }));
+    const own = await app.request(createRequest("/own"));
+
+    expect(plain.headers.get("x-request-id")).toBe("gen-1");
+    expect(raw.headers.get("x-request-id")).toBe("in-1");
+    expect(await raw.text()).toBe("raw");
+    expect(own.headers.get("x-request-id")).toBe("handler-set");
   });
 
   it("does not read request headers when nothing is logged", async () => {

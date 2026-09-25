@@ -17,29 +17,26 @@ export interface LoggerOptions extends OutputOptions {
   traceId?: string;
 }
 
-/** Request-scoped fields shared by every entry. Built lazily and already sanitized. */
-export interface BaseFields {
-  trace_id?: string;
-  req?: RequestMetadata;
-}
-
 /**
  * State shared by a logger and its children for one request (or one
- * standalone logger). Base fields are produced lazily by `buildBase` on the
- * first emitted entry, so requests that never log pay almost nothing. When
- * `baseVersion` changes (e.g. Hono moved on to the route handler), the base
- * is rebuilt so fields such as `req.route` stay accurate.
+ * standalone logger). The trace id and request metadata are resolved lazily,
+ * so requests that never log pay almost nothing. When `requestVersion`
+ * changes (Hono moved on to the route handler), request metadata is rebuilt
+ * so fields such as `req.route` stay accurate.
  *
  * @internal
  */
 export interface LoggerCore<Input = unknown> {
   readonly minPriority: number;
   readonly output: ResolvedOutput;
-  readonly buildBase: ((input: Input, output: ResolvedOutput) => BaseFields) | undefined;
-  readonly baseVersion: ((input: Input) => number) | undefined;
-  readonly baseInput: Input;
-  base: BaseFields | undefined;
-  baseStamp: number;
+  readonly input: Input;
+  readonly resolveTraceId: ((input: Input) => string | undefined) | undefined;
+  readonly buildRequest: ((input: Input, output: ResolvedOutput) => RequestMetadata) | undefined;
+  readonly requestVersion: ((input: Input) => number) | undefined;
+  traceId: string | undefined;
+  traceResolved: boolean;
+  req: RequestMetadata | undefined;
+  reqStamp: number;
 }
 
 const CORE = Symbol("hono-cloudflare-logger.core");
@@ -71,13 +68,25 @@ function assignSafe(target: Record<string, unknown>, source: LogData): void {
   }
 }
 
-function currentBase(core: LoggerCore): BaseFields {
-  const version = core.baseVersion ? core.baseVersion(core.baseInput) : 0;
-  if (core.base === undefined || version !== core.baseStamp) {
-    core.base = core.buildBase ? core.buildBase(core.baseInput, core.output) : {};
-    core.baseStamp = version;
+function currentTraceId(core: LoggerCore): string | undefined {
+  if (!core.traceResolved) {
+    core.traceId = core.resolveTraceId ? core.resolveTraceId(core.input) : undefined;
+    core.traceResolved = true;
   }
-  return core.base;
+  return core.traceId;
+}
+
+function currentRequest(core: LoggerCore): RequestMetadata | undefined {
+  if (!core.buildRequest) {
+    return undefined;
+  }
+
+  const version = core.requestVersion ? core.requestVersion(core.input) : 0;
+  if (core.req === undefined || version !== core.reqStamp) {
+    core.req = core.buildRequest(core.input, core.output);
+    core.reqStamp = version;
+  }
+  return core.req;
 }
 
 export class Logger {
@@ -89,23 +98,26 @@ export class Logger {
     if (CORE in options) {
       this.core = options[CORE];
     } else {
-      const base: BaseFields = {};
-      if (options.traceId) {
-        base.trace_id = options.traceId;
-      }
-
       this.core = {
         minPriority: resolveLevelPriority(options.level, DEFAULT_LEVEL),
         output: resolveOutput(options),
-        buildBase: undefined,
-        baseVersion: undefined,
-        baseInput: undefined,
-        base,
-        baseStamp: 0,
+        input: undefined,
+        resolveTraceId: undefined,
+        buildRequest: undefined,
+        requestVersion: undefined,
+        traceId: options.traceId || undefined,
+        traceResolved: true,
+        req: undefined,
+        reqStamp: 0,
       };
     }
 
     this.context = undefined;
+  }
+
+  /** Correlation id of this request (or the one given to a standalone logger). */
+  get traceId(): string | undefined {
+    return currentTraceId(this.core);
   }
 
   /** Merges fields into every later entry from this logger. Reserved keys are ignored. */
@@ -171,9 +183,9 @@ export class Logger {
         entry.time = isoTimestamp();
       }
 
-      const base = currentBase(core);
-      if (base.trace_id !== undefined) {
-        entry.trace_id = base.trace_id;
+      const traceId = currentTraceId(core);
+      if (traceId !== undefined) {
+        entry.trace_id = traceId;
       }
 
       if (this.context !== undefined) {
@@ -193,8 +205,9 @@ export class Logger {
         entry.err = serializeErrorValue(err, output.sanitize);
       }
 
-      if (base.req !== undefined) {
-        entry.req = base.req;
+      const req = currentRequest(core);
+      if (req !== undefined) {
+        entry.req = req;
       }
 
       output.write(entry, priority);

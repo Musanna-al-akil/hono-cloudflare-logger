@@ -2,12 +2,13 @@ import type { Context, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
 import { resolveLevelPriority, resolveOutput, type ResolvedOutput } from "./config.ts";
 import { DEFAULT_LEVEL } from "./levels.ts";
-import { createLoggerFromCore, type BaseFields } from "./logger.ts";
+import { createLoggerFromCore } from "./logger.ts";
 import { sanitize } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
+import { defaultTraceIdGenerator, resolveTraceId, type TraceIdOptions } from "./trace.ts";
 import type { LoggerConfig, RequestMetadata } from "./types.ts";
 
-const DEFAULT_TRACE_HEADER = "X-Request-Id";
+const DEFAULT_TRACE_HEADER = "x-request-id";
 
 /** Credentials that never belong in logs, whatever the header options say. */
 const SENSITIVE_HEADERS: ReadonlySet<string> = new Set([
@@ -21,7 +22,6 @@ const SENSITIVE_HEADERS: ReadonlySet<string> = new Set([
 
 /** Configuration normalized once per `logger()` call instead of once per request. */
 interface ResolvedConfig {
-  readonly traceHeader: string;
   readonly includeCfProperties: readonly string[];
   /** `true` captures every header, a list captures lowercased allowlisted names. */
   readonly headers: boolean | readonly string[];
@@ -87,13 +87,11 @@ function hasKeys(record: Record<string, unknown>): boolean {
   return false;
 }
 
-function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput): BaseFields {
-  const base: BaseFields = {};
-  const traceId = c.req.header(resolved.traceHeader) ?? c.req.header("cf-ray");
-  if (traceId) {
-    base.trace_id = traceId;
-  }
-
+function buildRequest(
+  resolved: ResolvedConfig,
+  c: Context,
+  output: ResolvedOutput,
+): RequestMetadata {
   const req: RequestMetadata = {
     method: c.req.method,
     path: c.req.path,
@@ -121,8 +119,7 @@ function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput)
     req.cf = cf;
   }
 
-  base.req = sanitize(req, output.sanitize);
-  return base;
+  return sanitize(req, output.sanitize);
 }
 
 /** Hono advances `routeIndex` as it moves through middleware to the handler. */
@@ -144,31 +141,42 @@ function scheduleFlush(c: Context, flush: () => Promise<void>): void {
 }
 
 export function logger(config: LoggerConfig = {}): MiddlewareHandler {
-  const { traceHeader = DEFAULT_TRACE_HEADER, autoLogging = "silent", header = false } = config;
+  const { autoLogging = "silent", header = false, responseHeader = false } = config;
 
   const minPriority = resolveLevelPriority(config.level, DEFAULT_LEVEL);
   const output = resolveOutput(config);
   const resolved: ResolvedConfig = {
-    traceHeader,
     includeCfProperties: [...(config.includeCfProperties ?? [])],
     headers: typeof header === "boolean" ? header : header.map((name) => name.toLowerCase()),
     query: config.query ?? false,
   };
-  const buildRequestBase = (c: Context, requestOutput: ResolvedOutput): BaseFields =>
-    buildBase(resolved, c, requestOutput);
+  const traceOptions: TraceIdOptions = {
+    header: config.traceHeader === false ? undefined : (config.traceHeader ?? DEFAULT_TRACE_HEADER),
+    traceparent: config.traceparent ?? true,
+    generate:
+      config.generateTraceId === false
+        ? undefined
+        : (config.generateTraceId ?? defaultTraceIdGenerator),
+  };
+  const resolveRequestTraceId = (c: Context): string | undefined => resolveTraceId(c, traceOptions);
+  const buildRequestMetadata = (c: Context, requestOutput: ResolvedOutput): RequestMetadata =>
+    buildRequest(resolved, c, requestOutput);
 
   const createRequestLogger = (c: Context) =>
     createLoggerFromCore({
       minPriority,
       output,
-      buildBase: buildRequestBase,
-      baseVersion: routeVersion,
-      baseInput: c,
-      base: undefined,
-      baseStamp: 0,
+      input: c,
+      resolveTraceId: resolveRequestTraceId,
+      buildRequest: buildRequestMetadata,
+      requestVersion: routeVersion,
+      traceId: undefined,
+      traceResolved: false,
+      req: undefined,
+      reqStamp: 0,
     });
 
-  if (autoLogging === "silent" && !output.flush) {
+  if (autoLogging === "silent" && !output.flush && !responseHeader) {
     // Nothing happens after the handler, so skip the timer and the extra async frame.
     return (c, next) => {
       c.set("logger", createRequestLogger(c) as never);
@@ -214,6 +222,13 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
           { status, duration_ms: durationMs },
           { placement: "flat" },
         );
+      }
+    }
+
+    if (responseHeader) {
+      const traceId = requestLogger.traceId;
+      if (traceId !== undefined && !c.res.headers.has(responseHeader)) {
+        c.header(responseHeader, traceId);
       }
     }
 
