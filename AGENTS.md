@@ -66,13 +66,14 @@ Check exit codes directly. Piping `npm run lint` through `tail` hides failures.
 ## Benchmark protocol
 
 - Run `npm run bench:compare` for any change to `src/` that could affect speed. Close other heavy processes first.
-- The `control: no logger middleware` scenario measures machine noise. If it moves more than about 3%, rerun before drawing conclusions.
+- The `control: no logger middleware` scenario measures noise. In Node it reads about +3% even on a quiet machine (an in-process effect of the other scenarios); in workerd it stays within 1%. If it moves further than that, rerun before drawing conclusions.
 - Don't accept a regression over 5% in any scenario without investigating it and writing it up in `BENCHMARKS.md`. The wide-payload regression is known and documented there.
 - `bench/scenarios.ts` may only use API that existed in 0.1, so the baseline stays comparable. When you add a scenario, regenerate the baseline from the 0.1 source:
-  1. `git worktree add <tmp> afff1cf`
+  1. `git worktree add <tmp> v0.1.0-beta.1`
   2. Copy `bench/`, `scripts/` and `vitest.config.ts` into it, and symlink `node_modules`.
   3. Run `vitest bench --run --outputJson …` and `node bench/workerd/run.mjs --out baseline`.
   4. Copy the results back and run `node scripts/bench-normalize.mjs` on them.
+  5. Regenerate the after results in the same session, so both sides see the same machine state.
 - Micro-benchmarks can mislead. A change that wins in isolation must also win in `bench:compare`.
 
 ## Adding an option

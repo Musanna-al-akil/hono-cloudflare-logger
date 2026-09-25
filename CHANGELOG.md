@@ -32,7 +32,7 @@
   **Performance**
   - Config is resolved once, and request metadata is built lazily.
   - Context is sanitized once, when it is set.
-  - Log calls are 1.2x–3x faster and logging middleware 1.2x–1.6x faster in Node.js and workerd. Very wide payloads (50+ fields) are 15–35% slower because of the new always-on safety pass.
+  - Log calls are 1.3x–3x faster and logging middleware 1.1x–1.5x faster in Node.js and workerd. Very wide payloads (50+ fields) are 18–35% slower because of the new always-on safety pass.
 
 ## 0.1.0-beta.0 - 2026-02-26
 

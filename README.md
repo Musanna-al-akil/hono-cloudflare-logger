@@ -2,7 +2,7 @@
 
 Structured logging for [Hono](https://hono.dev/) on Cloudflare Workers. It is
 built around how Workers Logs actually stores and bills log events. Zero runtime
-dependencies, about 4.8 KB min+gzip.
+dependencies; it adds about 4.8 KB min+gzip to a Worker ([details](BENCHMARKS.md#bundle-size)).
 
 ```ts
 import { Hono } from "hono";
