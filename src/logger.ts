@@ -1,5 +1,5 @@
-import { DEFAULT_LEVEL, getLevelPriority, shouldLogPriority } from "./levels.ts";
-import { redactDeep } from "./redact.ts";
+import { DEFAULT_LEVEL, getLevelPriority } from "./levels.ts";
+import { createKeyMatcher, redactDeep, type KeyMatcher } from "./redact.ts";
 import { writeLogEntry } from "./serialize.ts";
 import type { LogContext, LogEntry, RequestMetadata, SyslogLevel } from "./types.ts";
 
@@ -12,8 +12,34 @@ export interface LogWriteOptions {
 export interface LoggerOptions {
   level?: SyslogLevel;
   traceId?: string;
-  req?: RequestMetadata;
   redactKeys?: readonly string[];
+}
+
+/** Request-scoped fields shared by every entry. Built once and already redacted. */
+export interface BaseFields {
+  trace_id?: string;
+  req?: RequestMetadata;
+}
+
+/**
+ * State shared by a logger and its children for one request (or one
+ * standalone logger). Base fields are produced lazily by `buildBase` on the
+ * first emitted entry, so requests that never log pay almost nothing.
+ *
+ * @internal
+ */
+export interface LoggerCore<Input = unknown> {
+  readonly minPriority: number;
+  readonly matcher: KeyMatcher | undefined;
+  readonly buildBase: ((input: Input, matcher: KeyMatcher | undefined) => BaseFields) | undefined;
+  readonly baseInput: Input;
+  base: BaseFields | undefined;
+}
+
+const CORE = Symbol("hono-cloudflare-logger.core");
+
+interface InternalInit {
+  readonly [CORE]: LoggerCore;
 }
 
 function isReservedKey(key: string): boolean {
@@ -22,11 +48,7 @@ function isReservedKey(key: string): boolean {
 
 function assignSafe(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const key in source) {
-    if (!Object.hasOwn(source, key)) {
-      continue;
-    }
-
-    if (isReservedKey(key)) {
+    if (!Object.hasOwn(source, key) || isReservedKey(key)) {
       continue;
     }
 
@@ -34,29 +56,42 @@ function assignSafe(target: Record<string, unknown>, source: Record<string, unkn
   }
 }
 
+function resolveBase(core: LoggerCore): BaseFields {
+  const base = core.buildBase ? core.buildBase(core.baseInput, core.matcher) : {};
+  core.base = base;
+  return base;
+}
+
 export class Logger {
-  private readonly minLevelPriority: number;
-  private readonly baseData: Omit<LogEntry, "level" | "time" | "msg">;
-  private readonly redactKeys: ReadonlySet<string>;
-  private context: LogContext = {};
+  private readonly core: LoggerCore;
+  private context: LogContext | undefined;
 
-  constructor(options: LoggerOptions = {}) {
-    const level = options.level ?? DEFAULT_LEVEL;
-    this.minLevelPriority = getLevelPriority(level);
-    this.baseData = {};
-    this.redactKeys = new Set((options.redactKeys ?? []).map((key) => key.toLowerCase()));
+  constructor(options?: LoggerOptions);
+  constructor(options: LoggerOptions | InternalInit = {}) {
+    if (CORE in options) {
+      this.core = options[CORE];
+    } else {
+      const base: BaseFields = {};
+      if (options.traceId) {
+        base.trace_id = options.traceId;
+      }
 
-    if (options.traceId) {
-      this.baseData.trace_id = options.traceId;
+      this.core = {
+        minPriority: getLevelPriority(options.level ?? DEFAULT_LEVEL),
+        matcher: createKeyMatcher(options.redactKeys ?? []),
+        buildBase: undefined,
+        baseInput: undefined,
+        base,
+      };
     }
 
-    if (options.req) {
-      this.baseData.req = options.req;
-    }
+    this.context = undefined;
   }
 
   setContext(context: LogContext): void {
-    Object.assign(this.context, context);
+    const redacted = redactDeep(context, this.core.matcher);
+    this.context ??= {};
+    assignSafe(this.context, redacted);
   }
 
   debug(msg: string, data?: LogContext, options?: LogWriteOptions): void {
@@ -99,7 +134,8 @@ export class Logger {
     err?: Error,
     dataPlacement: DataPlacement = "trace",
   ): void {
-    if (!shouldLogPriority(levelPriority, this.minLevelPriority)) {
+    const core = this.core;
+    if (levelPriority < core.minPriority) {
       return;
     }
 
@@ -108,15 +144,24 @@ export class Logger {
       msg,
     };
     if (data && dataPlacement === "trace") {
-      entry.trace = data;
+      entry.trace = redactDeep(data, core.matcher);
     }
     entry.time = new Date().toISOString();
 
-    assignSafe(entry, this.baseData as Record<string, unknown>);
-    assignSafe(entry, this.context);
+    const base = core.base ?? resolveBase(core);
+    if (base.trace_id) {
+      entry.trace_id = base.trace_id;
+    }
+    if (base.req) {
+      entry.req = base.req;
+    }
+
+    if (this.context) {
+      assignSafe(entry, this.context);
+    }
 
     if (data && dataPlacement === "flat") {
-      assignSafe(entry, data);
+      assignSafe(entry, redactDeep(data, core.matcher));
     }
 
     if (err instanceof Error) {
@@ -128,7 +173,11 @@ export class Logger {
       entry.err = errEntry;
     }
 
-    const redacted = redactDeep(entry, this.redactKeys);
-    writeLogEntry(redacted);
+    writeLogEntry(entry, levelPriority);
   }
+}
+
+/** @internal Creates a logger bound to an existing core. */
+export function createLoggerFromCore<Input>(core: LoggerCore<Input>): Logger {
+  return new Logger({ [CORE]: core as LoggerCore } as LoggerOptions);
 }
