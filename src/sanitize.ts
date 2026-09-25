@@ -183,6 +183,33 @@ function sanitizeRecord(
   return clone ?? source;
 }
 
+/** Slow path of {@link sanitizeRecord} that catches per key. Always copies. */
+function sanitizeRecordGuarded(
+  source: Record<string, unknown>,
+  options: SanitizeOptions,
+  depth: number,
+  ancestors: object[],
+): Record<string, unknown> {
+  const matcher = options.matcher;
+  const clone: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    let sanitized: unknown;
+    if (matcher !== undefined && matcher.matches(key)) {
+      sanitized = options.censor;
+    } else {
+      try {
+        sanitized = sanitizeValue(source[key], options, depth, ancestors);
+      } catch {
+        sanitized = UNSERIALIZABLE;
+      }
+    }
+    if (sanitized !== undefined) {
+      setOwn(clone, key, sanitized);
+    }
+  }
+  return clone;
+}
+
 function sanitizeObject(
   value: object,
   options: SanitizeOptions,
@@ -238,13 +265,18 @@ function sanitizeObject(
       return sanitizeRecord(record, options, nextDepth, ancestors, false);
     }
 
-    return sanitizeRecord(
-      value as Record<string, unknown>,
-      options,
-      nextDepth,
-      ancestors,
-      !isPlainObject(value),
-    );
+    try {
+      return sanitizeRecord(
+        value as Record<string, unknown>,
+        options,
+        nextDepth,
+        ancestors,
+        !isPlainObject(value),
+      );
+    } catch {
+      // A getter threw: redo the walk, replacing only the values that fail.
+      return sanitizeRecordGuarded(value as Record<string, unknown>, options, nextDepth, ancestors);
+    }
   } catch {
     return UNSERIALIZABLE;
   } finally {

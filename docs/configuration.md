@@ -81,7 +81,7 @@ Every entry is made safe to write whatever the options are:
 - Cycles become `"[Circular]"`, and nesting deeper than 10 levels becomes `"[Object]"` or `"[Array]"`.
 - BigInt and symbols become strings, and functions are dropped.
 - `Map` → object, `Set` → array, binary data → `"[Uint8Array(4)]"`, and anything with `toJSON()` (e.g. `Date`) uses it.
-- Class instances are copied as plain objects, and values whose getters throw become `"[Unserializable]"`.
+- Class instances are copied as plain objects, and a property whose getter throws becomes `"[Unserializable]"` (its siblings are kept).
 - Unchanged objects are passed by reference, not copied. A `sink` that keeps entries past the call (e.g. to batch them) should copy them, or avoid changing logged objects.
 
 ## Automatic entries and cost control

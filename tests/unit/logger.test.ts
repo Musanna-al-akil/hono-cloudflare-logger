@@ -270,6 +270,26 @@ describe("Logger", () => {
     expect(onlyEntry(spies).data).toEqual({ body: `${"x".repeat(10)}…[truncated 15 chars]` });
   });
 
+  it("replaces only the value whose getter throws", () => {
+    const logger = new Logger({ redactKeys: ["secret"] });
+    const nested = {
+      ok: 2,
+      get bad(): never {
+        throw new Error("nope");
+      },
+      get secret(): never {
+        throw new Error("never read");
+      },
+    };
+
+    logger.info("getter", { nested, sibling: 1 });
+
+    expect(onlyEntry(spies).data).toEqual({
+      nested: { ok: 2, bad: "[Unserializable]", secret: "[REDACTED]" },
+      sibling: 1,
+    });
+  });
+
   it("survives a throwing toJSON", () => {
     const logger = new Logger();
     const hostile = {
