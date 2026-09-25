@@ -62,13 +62,16 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "pack:dry-run": "env npm_config_cache=/tmp/npm-cache npm pack --dry-run",
-    "prepublish:check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run pack:dry-run",
+    "check:package": "publint && attw --pack . --profile esm-only",
+    "check:jsr": "npx -y jsr publish --dry-run --allow-dirty",
+    "prepublish:check": "npm run lint && npm run test && npm run test:workers && npm run build && npm run size && npm run check:package && npm run pack:dry-run",
     "prepublishOnly": "npm run prepublish:check",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@changesets/cli": "^2.29.8",
     "@cloudflare/vitest-plugin": "^1.2.7",
     "@types/node": "^22.19.13",
@@ -78,6 +81,7 @@
     "miniflare": "^4.20260730.0",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.50.0",
+    "publint": "^0.3.24",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

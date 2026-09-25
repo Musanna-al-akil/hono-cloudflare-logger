@@ -6,42 +6,104 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test-build:
+    name: Test and build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Format check
-        run: npm run format:check
-
-      - name: Lint
+      - name: Lint, format and typecheck
         run: npm run lint
 
-      - name: Test
-        run: npm run test
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Test in workerd
+        run: npm run test:workers
 
       - name: Build
         run: npm run build
 
-      - name: Smoke import test
-        run: node --input-type=module -e "const m = await import('./dist/index.js'); if (typeof m.logger !== 'function') throw new Error('Missing logger export');"
+      - name: Bundle size budget
+        run: npm run size
 
-      - name: Pack
-        run: npm pack
+      - name: Package exports and types
+        run: npm run check:package
+
+      - name: Smoke import test
+        run: |
+          node --input-type=module -e "
+          const m = await import('./dist/index.js');
+          if (typeof m.logger !== 'function' || typeof m.createLogger !== 'function') throw new Error('Missing root exports');
+          const c = await import('./dist/context.js');
+          if (typeof c.getLogger !== 'function') throw new Error('Missing ./context export');"
+          grep -q "interface ContextVariableMap" dist/index.d.ts
 
       - name: Verify package contents
         run: |
+          npm pack
           PACK_FILE=$(ls -1 *.tgz | head -n 1)
-          tar -tf "$PACK_FILE" | grep -q "package/dist/index.js"
-          tar -tf "$PACK_FILE" | grep -q "package/dist/index.d.ts"
+          for file in dist/index.js dist/index.d.ts dist/context.js dist/context.d.ts; do
+            tar -tf "$PACK_FILE" | grep -q "package/$file" || { echo "Missing $file"; exit 1; }
+          done
+
+  jsr:
+    name: JSR dry run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish dry run (slow types, exports)
+        run: npm run check:jsr
+
+  bench:
+    name: Benchmarks (informational)
+    runs-on: ubuntu-latest
+    # Shared runners are noisy: report numbers, never fail the build on them.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run benchmarks against the committed baseline
+        run: npm run bench:compare
+
+      - name: Publish report to the job summary
+        run: node scripts/bench-report.mjs >> "$GITHUB_STEP_SUMMARY"
