@@ -61,6 +61,12 @@ describe("createWriter", () => {
 });
 
 describe("formatPretty", () => {
+  it("escapes control characters in keys", () => {
+    const line = formatPretty({ level: "info", msg: "m", "x\nINFO fake": 1 });
+
+    expect(line).toBe("INFO      m x\\u000aINFO fake=1");
+  });
+
   it("prints the clock time, padded level, escaped message and fields", () => {
     const line = formatPretty({
       level: "warning",

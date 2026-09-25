@@ -44,7 +44,7 @@ export function formatPretty(entry: LogEntry): string {
 
     const value = entry[key];
     if (value !== undefined) {
-      line += ` ${key}=${JSON.stringify(value)}`;
+      line += ` ${escapeControlChars(key)}=${JSON.stringify(value)}`;
     }
   }
 
