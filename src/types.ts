@@ -1,3 +1,4 @@
+import type { Context, Env } from "hono";
 import type { Logger } from "./logger.ts";
 
 export type SyslogLevel =
@@ -117,9 +118,18 @@ export interface LogSinkObject {
   flush?: () => Promise<void>;
 }
 
-export interface LoggerConfig {
-  /** Minimum log level to emit. Default: `info`. */
-  level?: SyslogLevel;
+/**
+ * Resolves the minimum level per request, e.g. from an environment binding:
+ * `(c) => c.env.LOG_LEVEL`. Unknown values fall back to `info`.
+ */
+export type LevelResolver<E extends Env = any> = (c: Context<E>) => string | undefined;
+
+export interface LoggerConfig<E extends Env = any> {
+  /**
+   * Minimum log level to emit, or a function resolving it per request (called
+   * at most once, on the first log call). Default: `info`.
+   */
+  level?: SyslogLevel | LevelResolver<E>;
   /** Output format. Default: `object`. */
   format?: LogFormat;
   /** Custom destination for entries. Overrides `format`. */

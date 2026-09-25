@@ -1,12 +1,12 @@
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, Env, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
 import { resolveLevelPriority, resolveOutput, type ResolvedOutput } from "./config.ts";
-import { DEFAULT_LEVEL } from "./levels.ts";
+import { DEFAULT_LEVEL, getLevelPriority, isSyslogLevel } from "./levels.ts";
 import { createLoggerFromCore } from "./logger.ts";
 import { sanitize } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { defaultTraceIdGenerator, resolveTraceId, type TraceIdOptions } from "./trace.ts";
-import type { LoggerConfig, RequestMetadata } from "./types.ts";
+import type { LevelResolver, LoggerConfig, RequestMetadata } from "./types.ts";
 
 const DEFAULT_TRACE_HEADER = "x-request-id";
 
@@ -140,11 +140,33 @@ function scheduleFlush(c: Context, flush: () => Promise<void>): void {
   }
 }
 
-export function logger(config: LoggerConfig = {}): MiddlewareHandler {
+const DEFAULT_PRIORITY = getLevelPriority(DEFAULT_LEVEL);
+
+/** Wraps a user level resolver: unknown values and exceptions fall back to the default. */
+function createLevelResolver(resolver: LevelResolver): (c: Context) => number {
+  return (c) => {
+    try {
+      const level = resolver(c);
+      return isSyslogLevel(level) ? getLevelPriority(level) : DEFAULT_PRIORITY;
+    } catch {
+      return DEFAULT_PRIORITY;
+    }
+  };
+}
+
+/**
+ * Hono middleware that puts a request-scoped {@link Logger} on `c.var.logger`
+ * and optionally writes access or error entries when the response is ready.
+ */
+export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): MiddlewareHandler<E> {
   const { autoLogging = "silent", header = false, responseHeader = false } = config;
 
-  const minPriority = resolveLevelPriority(config.level, DEFAULT_LEVEL);
-  const output = resolveOutput(config);
+  const level = config.level;
+  const levelResolver =
+    typeof level === "function" ? createLevelResolver(level as LevelResolver) : undefined;
+  const minPriority =
+    typeof level === "function" ? DEFAULT_PRIORITY : resolveLevelPriority(level, DEFAULT_LEVEL);
+  const output = resolveOutput(config as LoggerConfig);
   const resolved: ResolvedConfig = {
     includeCfProperties: [...(config.includeCfProperties ?? [])],
     headers: typeof header === "boolean" ? header : header.map((name) => name.toLowerCase()),
@@ -165,6 +187,7 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
   const createRequestLogger = (c: Context) =>
     createLoggerFromCore({
       minPriority,
+      levelResolver,
       output,
       input: c,
       resolveTraceId: resolveRequestTraceId,

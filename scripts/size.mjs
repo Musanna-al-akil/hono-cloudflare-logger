@@ -15,8 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Gzip budgets in bytes, per entry. */
 const ENTRIES = [
-  { file: "dist/index.js", budget: 4096 },
-  { file: "dist/context.js", budget: 4096, optional: true },
+  { file: "dist/index.js", budget: 6144 },
+  { file: "dist/context.js", budget: 6144, optional: true },
 ];
 
 let failed = false;

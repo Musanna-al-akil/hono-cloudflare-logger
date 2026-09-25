@@ -15,11 +15,13 @@ export interface LoggerOptions extends OutputOptions {
   level?: SyslogLevel;
   /** Correlation id added to every entry as `trace_id`. */
   traceId?: string;
+  /** Fields added to every entry, like an initial `setContext()`. */
+  bindings?: LogData;
 }
 
 /**
  * State shared by a logger and its children for one request (or one
- * standalone logger). The trace id and request metadata are resolved lazily,
+ * standalone logger). The level, trace id and request metadata are resolved lazily,
  * so requests that never log pay almost nothing. When `requestVersion`
  * changes (Hono moved on to the route handler), request metadata is rebuilt
  * so fields such as `req.route` stay accurate.
@@ -27,7 +29,9 @@ export interface LoggerOptions extends OutputOptions {
  * @internal
  */
 export interface LoggerCore<Input = unknown> {
-  readonly minPriority: number;
+  minPriority: number;
+  /** Resolves `minPriority` on the first write, then is cleared. */
+  levelResolver: ((input: Input) => number) | undefined;
   readonly output: ResolvedOutput;
   readonly input: Input;
   readonly resolveTraceId: ((input: Input) => string | undefined) | undefined;
@@ -100,6 +104,7 @@ export class Logger {
     } else {
       this.core = {
         minPriority: resolveLevelPriority(options.level, DEFAULT_LEVEL),
+        levelResolver: undefined,
         output: resolveOutput(options),
         input: undefined,
         resolveTraceId: undefined,
@@ -113,6 +118,9 @@ export class Logger {
     }
 
     this.context = undefined;
+    if (!(CORE in options) && options.bindings) {
+      this.setContext(options.bindings);
+    }
   }
 
   /** Correlation id of this request (or the one given to a standalone logger). */
@@ -125,6 +133,18 @@ export class Logger {
     const sanitized = sanitize(context, this.core.output.sanitize);
     this.context ??= {};
     assignSafe(this.context, sanitized);
+  }
+
+  /**
+   * Returns a logger that shares this one's request, trace id and output, with
+   * `bindings` added to its context. Later `setContext()` calls on either
+   * logger do not affect the other.
+   */
+  child(bindings: LogData): Logger {
+    const child = new Logger({ [CORE]: this.core } as InternalInit as LoggerOptions);
+    child.context = this.context === undefined ? {} : { ...this.context };
+    assignSafe(child.context, sanitize(bindings, this.core.output.sanitize));
+    return child;
   }
 
   debug(msg: string, data?: LogData, options?: LogWriteOptions): void {
@@ -168,6 +188,10 @@ export class Logger {
     options: LogWriteOptions | undefined,
   ): void {
     const core = this.core;
+    if (core.levelResolver !== undefined) {
+      core.minPriority = core.levelResolver(core.input);
+      core.levelResolver = undefined;
+    }
     if (priority < core.minPriority) {
       return;
     }
@@ -217,7 +241,15 @@ export class Logger {
   }
 }
 
+/**
+ * Creates a logger outside of the Hono middleware, e.g. in `scheduled`,
+ * `queue` or Durable Object handlers.
+ */
+export function createLogger(options: LoggerOptions = {}): Logger {
+  return new Logger(options);
+}
+
 /** @internal Creates a logger bound to an existing core. */
 export function createLoggerFromCore<Input>(core: LoggerCore<Input>): Logger {
-  return new Logger({ [CORE]: core as LoggerCore } as LoggerOptions);
+  return new Logger({ [CORE]: core as LoggerCore } as InternalInit as LoggerOptions);
 }
