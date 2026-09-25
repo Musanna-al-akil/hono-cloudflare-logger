@@ -26,8 +26,8 @@ jobs:
         run: npm ci
 
       - name: Create or update release PR
-        uses: changesets/action@v1
+        # v2 of the action is the one that supports @changesets/cli v3.
+        uses: changesets/action@v2
         with:
-          version: npm run version-packages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          version-script: npm run version-packages
+          github-token: ${{ secrets.GITHUB_TOKEN }}

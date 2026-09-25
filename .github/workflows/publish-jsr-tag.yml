@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # JSR authenticates GitHub Actions through OIDC; no token needed.
+  id-token: write
 
 jobs:
   publish-jsr:
@@ -51,6 +53,4 @@ jobs:
         run: npm run test
 
       - name: Publish to JSR
-        env:
-          JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
-        run: npx jsr publish --token "$JSR_TOKEN"
+        run: npx jsr publish
