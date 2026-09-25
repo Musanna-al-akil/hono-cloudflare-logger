@@ -13,7 +13,7 @@
     "hono-cloudflare-logger": "file:../.."
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "wrangler": "^4.140.0"
   }
 }

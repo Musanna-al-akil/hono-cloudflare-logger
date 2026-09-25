@@ -1,2 +1,2 @@
-dist/index.js    raw   9908 B | min  12998 B | min+gzip  5099 B (budget 5120 B)
-dist/context.js  raw    402 B | min   8783 B | min+gzip  3518 B (budget 4096 B)
+dist/index.js    raw  10621 B | min  12964 B | min+gzip  5072 B (budget 5120 B)
+dist/context.js  raw    915 B | min   8749 B | min+gzip  3499 B (budget 4096 B)

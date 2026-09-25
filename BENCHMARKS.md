@@ -109,8 +109,8 @@ Minified + gzip, with `hono` external (`npm run size`):
 
 | Entry                            | 0.1.0-beta.1 | 0.2.0-beta.0 |  Budget |
 | -------------------------------- | -----------: | -----------: | ------: |
-| `hono-cloudflare-logger`         |      1,615 B |      5,099 B | 5,120 B |
-| `hono-cloudflare-logger/context` |            — |      3,518 B | 4,096 B |
+| `hono-cloudflare-logger`         |      1,615 B |      5,072 B | 5,120 B |
+| `hono-cloudflare-logger/context` |            — |      3,499 B | 4,096 B |
 
 `./context` shares a chunk with the root entry, so importing both costs little
 more than the root alone. The growth comes from the new features: error cause
@@ -135,6 +135,6 @@ script size limit after compression.
 The last row is measured against an app that already uses `contextStorage()`.
 The added size is a little smaller than the package on its own because gzip
 shares strings with Hono. `wrangler deploy --dry-run` for
-[`examples/minimal`](examples/minimal) reports a total upload of 23.21 KiB
-gzip (13.39 KiB with `--minify`), far below the 3 MB (Free) and 10 MB (Paid)
+[`examples/minimal`](examples/minimal) reports a total upload of 22.94 KiB
+gzip (13.36 KiB with `--minify`), far below the 3 MB (Free) and 10 MB (Paid)
 Workers limits.
