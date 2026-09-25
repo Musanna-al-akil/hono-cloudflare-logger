@@ -4,7 +4,12 @@ import {
   type OutputOptions,
   type ResolvedOutput,
 } from "./config.ts";
-import { DEFAULT_LEVEL, SYSLOG_LEVELS } from "./levels.ts";
+import {
+  DEFAULT_LEVEL,
+  ERROR_LEVEL_PRIORITY,
+  SYSLOG_LEVELS,
+  WARNING_LEVEL_PRIORITY,
+} from "./levels.ts";
 import { sanitize, serializeErrorValue } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { isoTimestamp } from "./time.ts";
@@ -41,6 +46,78 @@ export interface LoggerCore<Input = unknown> {
   traceResolved: boolean;
   req: RequestMetadata | undefined;
   reqStamp: number;
+  /**
+   * Entries below `warning` held back by `bufferUntilError`, or `undefined`
+   * when entries are written straight through.
+   */
+  buffer: BufferedEntry[] | undefined;
+  bufferDropped: number;
+}
+
+interface BufferedEntry {
+  readonly entry: LogEntry;
+  readonly priority: number;
+}
+
+/** Upper bound on buffered entries per request; the oldest are dropped first. */
+export const MAX_BUFFERED_ENTRIES = 100;
+
+function emit(core: LoggerCore, entry: LogEntry, priority: number): void {
+  const buffer = core.buffer;
+  if (buffer !== undefined) {
+    if (priority < WARNING_LEVEL_PRIORITY) {
+      if (buffer.length >= MAX_BUFFERED_ENTRIES) {
+        buffer.shift();
+        core.bufferDropped += 1;
+      }
+      buffer.push({ entry, priority });
+      return;
+    }
+
+    if (priority >= ERROR_LEVEL_PRIORITY) {
+      flushBuffer(core);
+    }
+  }
+
+  core.output.write(entry, priority);
+}
+
+/**
+ * Writes buffered entries in their original order and stops buffering.
+ *
+ * @internal
+ */
+export function flushBuffer<Input>(core: LoggerCore<Input>): void {
+  const buffer = core.buffer;
+  if (buffer === undefined) {
+    return;
+  }
+
+  core.buffer = undefined;
+  if (core.bufferDropped > 0) {
+    const notice: LogEntry = {
+      level: "warning",
+      msg: "Buffered log entries dropped",
+      dropped_count: core.bufferDropped,
+    };
+    if (core.traceId !== undefined) {
+      notice.trace_id = core.traceId;
+    }
+    core.output.write(notice, WARNING_LEVEL_PRIORITY);
+  }
+
+  for (const item of buffer) {
+    core.output.write(item.entry, item.priority);
+  }
+}
+
+/**
+ * Drops buffered entries and stops buffering.
+ *
+ * @internal
+ */
+export function discardBuffer<Input>(core: LoggerCore<Input>): void {
+  core.buffer = undefined;
 }
 
 const CORE = Symbol("hono-cloudflare-logger.core");
@@ -114,6 +191,8 @@ export class Logger {
         traceResolved: true,
         req: undefined,
         reqStamp: 0,
+        buffer: undefined,
+        bufferDropped: 0,
       };
     }
 
@@ -234,7 +313,7 @@ export class Logger {
         entry.req = req;
       }
 
-      output.write(entry, priority);
+      emit(core, entry, priority);
     } catch (error) {
       reportWriteFailure(entry, error);
     }

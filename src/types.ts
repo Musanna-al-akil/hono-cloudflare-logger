@@ -154,8 +154,26 @@ export interface LoggerConfig<E extends Env = any> {
    * `false`. An existing header on the response is left untouched. Default: `false`.
    */
   responseHeader?: string | false;
-  /** Automatic request logging mode. Default: `silent`. */
+  /**
+   * Automatic entry when the response is ready. `access`: one entry per
+   * request, `info` for 2xx/3xx, `warning` for 4xx, `error` for 5xx or thrown
+   * errors. `error`: only the `error` ones. Default: `silent`.
+   */
   autoLogging?: AutoLoggingMode;
+  /**
+   * Fraction (0-1) of successful `info` access entries to keep. Warnings and
+   * errors are always kept. Default: `1`.
+   */
+  sampleRate?: number;
+  /** Return `true` to suppress the automatic entry, e.g. for health checks. */
+  skip?: (c: Context<E>) => boolean;
+  /**
+   * Hold `debug`/`info`/`notice` entries in memory and write them only if the
+   * request fails (a 5xx, a thrown error, or an `error`-level entry);
+   * otherwise drop them. Keeps full context for failures while cutting
+   * Workers Logs volume for successful requests. Default: `false`.
+   */
+  bufferUntilError?: boolean;
   /** Cloudflare `request.cf` keys to include under `req.cf`. Default: `[]`. */
   includeCfProperties?: readonly CfPropertyKey[];
   /**

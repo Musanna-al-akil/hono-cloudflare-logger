@@ -1,12 +1,24 @@
 import type { Context, Env, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
 import { resolveLevelPriority, resolveOutput, type ResolvedOutput } from "./config.ts";
-import { DEFAULT_LEVEL, getLevelPriority, isSyslogLevel } from "./levels.ts";
-import { createLoggerFromCore } from "./logger.ts";
+import {
+  DEFAULT_LEVEL,
+  ERROR_LEVEL_PRIORITY,
+  getLevelPriority,
+  isSyslogLevel,
+  WARNING_LEVEL_PRIORITY,
+} from "./levels.ts";
+import {
+  createLoggerFromCore,
+  discardBuffer,
+  flushBuffer,
+  type Logger,
+  type LoggerCore,
+} from "./logger.ts";
 import { sanitize } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { defaultTraceIdGenerator, resolveTraceId, type TraceIdOptions } from "./trace.ts";
-import type { LevelResolver, LoggerConfig, RequestMetadata } from "./types.ts";
+import type { AutoLoggingMode, LevelResolver, LoggerConfig, RequestMetadata } from "./types.ts";
 
 const DEFAULT_TRACE_HEADER = "x-request-id";
 
@@ -142,6 +154,62 @@ function scheduleFlush(c: Context, flush: () => Promise<void>): void {
 
 const DEFAULT_PRIORITY = getLevelPriority(DEFAULT_LEVEL);
 
+const AUTO_LOGGING_MODES: ReadonlySet<string> = new Set<AutoLoggingMode>([
+  "silent",
+  "access",
+  "error",
+]);
+
+function validateConfig(config: LoggerConfig): void {
+  const { autoLogging, sampleRate } = config;
+  if (autoLogging !== undefined && !AUTO_LOGGING_MODES.has(autoLogging)) {
+    throw new TypeError(`hono-cloudflare-logger: unknown autoLogging "${String(autoLogging)}"`);
+  }
+  if (sampleRate !== undefined && !(sampleRate >= 0 && sampleRate <= 1)) {
+    throw new TypeError("hono-cloudflare-logger: sampleRate must be between 0 and 1");
+  }
+}
+
+function shouldSkip(skip: ((c: Context) => boolean) | undefined, c: Context): boolean {
+  if (skip === undefined) {
+    return false;
+  }
+  try {
+    return skip(c) === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Writes the automatic entry for a finished request. */
+function writeAutoEntry(
+  requestLogger: Logger,
+  mode: AutoLoggingMode,
+  priority: number,
+  status: number,
+  durationMs: number,
+  error: unknown,
+  sampleRate: number,
+): void {
+  const data = { status, duration_ms: durationMs };
+
+  if (priority >= ERROR_LEVEL_PRIORITY) {
+    const msg = error === undefined ? "Request failed" : "Unhandled error";
+    requestLogger.error(msg, error, data, { placement: "flat" });
+    return;
+  }
+
+  if (mode !== "access") {
+    return;
+  }
+
+  if (priority >= WARNING_LEVEL_PRIORITY) {
+    requestLogger.warning("Request completed", data, { placement: "flat" });
+  } else if (sampleRate >= 1 || Math.random() < sampleRate) {
+    requestLogger.info("Request completed", data, { placement: "flat" });
+  }
+}
+
 /** Wraps a user level resolver: unknown values and exceptions fall back to the default. */
 function createLevelResolver(resolver: LevelResolver): (c: Context) => number {
   return (c) => {
@@ -159,7 +227,15 @@ function createLevelResolver(resolver: LevelResolver): (c: Context) => number {
  * and optionally writes access or error entries when the response is ready.
  */
 export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): MiddlewareHandler<E> {
-  const { autoLogging = "silent", header = false, responseHeader = false } = config;
+  validateConfig(config as LoggerConfig);
+  const {
+    autoLogging = "silent",
+    header = false,
+    responseHeader = false,
+    sampleRate = 1,
+    bufferUntilError = false,
+  } = config;
+  const skip = config.skip as ((c: Context) => boolean) | undefined;
 
   const level = config.level;
   const levelResolver =
@@ -184,71 +260,77 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
   const buildRequestMetadata = (c: Context, requestOutput: ResolvedOutput): RequestMetadata =>
     buildRequest(resolved, c, requestOutput);
 
-  const createRequestLogger = (c: Context) =>
-    createLoggerFromCore({
-      minPriority,
-      levelResolver,
-      output,
-      input: c,
-      resolveTraceId: resolveRequestTraceId,
-      buildRequest: buildRequestMetadata,
-      requestVersion: routeVersion,
-      traceId: undefined,
-      traceResolved: false,
-      req: undefined,
-      reqStamp: 0,
-    });
+  const createCore = (c: Context): LoggerCore<Context> => ({
+    minPriority,
+    levelResolver,
+    output,
+    input: c,
+    resolveTraceId: resolveRequestTraceId,
+    buildRequest: buildRequestMetadata,
+    requestVersion: routeVersion,
+    traceId: undefined,
+    traceResolved: false,
+    req: undefined,
+    reqStamp: 0,
+    buffer: bufferUntilError ? [] : undefined,
+    bufferDropped: 0,
+  });
 
-  if (autoLogging === "silent" && !output.flush && !responseHeader) {
+  if (autoLogging === "silent" && !output.flush && !responseHeader && !bufferUntilError) {
     // Nothing happens after the handler, so skip the timer and the extra async frame.
     return (c, next) => {
-      c.set("logger", createRequestLogger(c) as never);
+      c.set("logger", createLoggerFromCore(createCore(c)) as never);
       return next();
     };
   }
 
   return async (c, next) => {
     const startTime = Date.now();
-    let thrownError: unknown;
-
-    const requestLogger = createRequestLogger(c);
+    const core = createCore(c);
+    const requestLogger = createLoggerFromCore(core);
     c.set("logger", requestLogger as never);
 
+    let threw = false;
+    let thrownError: unknown;
     try {
       await next();
     } catch (error) {
+      threw = true;
       thrownError = error;
     }
 
-    const durationMs = Date.now() - startTime;
-    const status = c.res.status;
+    // Hono's onError handles thrown Errors and records them on c.error; only
+    // non-Error throws reach this middleware, and the runtime turns them into a 500.
+    const status = threw ? 500 : c.res.status;
+    const error = threw ? thrownError : c.error;
+    const priority =
+      threw || status >= 500
+        ? ERROR_LEVEL_PRIORITY
+        : status >= 400
+          ? WARNING_LEVEL_PRIORITY
+          : getLevelPriority("info");
 
-    if (autoLogging === "access") {
-      requestLogger.info(
-        "Request completed",
-        { status, duration_ms: durationMs },
-        { placement: "flat" },
+    if (autoLogging !== "silent" && !shouldSkip(skip, c)) {
+      writeAutoEntry(
+        requestLogger,
+        autoLogging,
+        priority,
+        status,
+        Date.now() - startTime,
+        error,
+        sampleRate,
       );
-    } else if (autoLogging === "error") {
-      const runtimeError = thrownError ?? c.error;
-      if (runtimeError) {
-        requestLogger.error(
-          "Unhandled error",
-          runtimeError,
-          { duration_ms: durationMs },
-          { placement: "flat" },
-        );
-      } else if (status >= 500) {
-        requestLogger.error(
-          "Request failed",
-          undefined,
-          { status, duration_ms: durationMs },
-          { placement: "flat" },
-        );
+    }
+
+    if (core.buffer !== undefined) {
+      if (priority >= ERROR_LEVEL_PRIORITY) {
+        flushBuffer(core);
+      } else {
+        discardBuffer(core);
       }
     }
 
-    if (responseHeader) {
+    if (responseHeader && !threw) {
       const traceId = requestLogger.traceId;
       if (traceId !== undefined && !c.res.headers.has(responseHeader)) {
         c.header(responseHeader, traceId);
@@ -259,7 +341,7 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
       scheduleFlush(c, output.flush);
     }
 
-    if (thrownError) {
+    if (threw) {
       throw thrownError;
     }
   };
