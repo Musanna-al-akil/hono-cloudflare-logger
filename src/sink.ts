@@ -87,7 +87,14 @@ export function createWriter(
 
   if (format === "pretty") {
     return (entry, priority) => {
-      writeToConsole(CONSOLE_METHOD_BY_PRIORITY[priority] ?? "error", formatPretty(entry));
+      let line: string;
+      try {
+        line = formatPretty(entry);
+      } catch (error) {
+        reportWriteFailure(entry, error);
+        return;
+      }
+      writeToConsole(CONSOLE_METHOD_BY_PRIORITY[priority] ?? "error", line);
     };
   }
 

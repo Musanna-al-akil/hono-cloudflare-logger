@@ -62,6 +62,15 @@ interface BufferedEntry {
 /** Upper bound on buffered entries per request; the oldest are dropped first. */
 export const MAX_BUFFERED_ENTRIES = 100;
 
+/** Writes one entry outside a log call, where nothing else would catch a failure. */
+function writeGuarded(core: LoggerCore, entry: LogEntry, priority: number): void {
+  try {
+    core.output.write(entry, priority);
+  } catch (error) {
+    reportWriteFailure(entry, error);
+  }
+}
+
 function emit(core: LoggerCore, entry: LogEntry, priority: number): void {
   const buffer = core.buffer;
   if (buffer !== undefined) {
@@ -103,11 +112,11 @@ export function flushBuffer<Input>(core: LoggerCore<Input>): void {
     if (core.traceId !== undefined) {
       notice.trace_id = core.traceId;
     }
-    core.output.write(notice, WARNING_LEVEL_PRIORITY);
+    writeGuarded(core as LoggerCore, notice, WARNING_LEVEL_PRIORITY);
   }
 
   for (const item of buffer) {
-    core.output.write(item.entry, item.priority);
+    writeGuarded(core as LoggerCore, item.entry, item.priority);
   }
 }
 

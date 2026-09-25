@@ -25,6 +25,19 @@ describe("createWriter", () => {
     });
   });
 
+  it("reports entries the pretty format cannot serialize without throwing", () => {
+    const write = createWriter("pretty", undefined);
+    const entry = { level: "info", msg: "big", n: 1n } as LogEntry;
+
+    expect(() => write(entry, 1)).not.toThrow();
+
+    expect(spies.info).not.toHaveBeenCalled();
+    expect(toEntry(spies.error.mock.calls[0]?.[0])).toMatchObject({
+      msg: "Logger failed to write entry",
+      original_msg: "big",
+    });
+  });
+
   it("falls back to console.error for an out-of-range priority", () => {
     createWriter("object", undefined)({ level: "emergency", msg: "x" }, 99);
     createWriter("json", undefined)({ level: "emergency", msg: "y" }, 99);

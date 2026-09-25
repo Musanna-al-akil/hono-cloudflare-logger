@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/index";
-import { onlyEntry, spyOnConsole, type ConsoleSpies } from "../test-utils";
+import { onlyEntry, spyOnConsole, toEntry, type ConsoleSpies } from "../test-utils";
 
 const route = vi.hoisted(() => ({ throws: false }));
 
@@ -63,5 +63,23 @@ describe("request metadata resilience", () => {
     expect(entry.msg).toBe("still logged");
     expect(entry.trace_id).toBe("generated");
     expect(entry).not.toHaveProperty("req");
+  });
+
+  it("never replaces the app's thrown value when a buffered entry fails to write", async () => {
+    spies.info.mockImplementation(() => {
+      throw new Error("console down");
+    });
+    const app = new Hono();
+    app.use("*", logger({ bufferUntilError: true, autoLogging: "error" }));
+    app.get("/", (c) => {
+      c.var.logger.info("buffered");
+      throw "string-thrown";
+    });
+
+    await expect(app.request("/")).rejects.toBe("string-thrown");
+    expect(spies.error.mock.calls.map(([entry]) => toEntry(entry).msg)).toEqual([
+      "Logger failed to write entry",
+      "Unhandled error",
+    ]);
   });
 });
