@@ -1,8 +1,8 @@
 # Configuration
 
 `logger(config)` validates its options once, when the middleware is created. An
-unknown `level`, `format` or `autoLogging` value, a `sampleRate` outside 0–1, or
-a non-positive `maxStringLength` throws a `TypeError` at startup, not on the
+unknown `level`, `format` or `autoLogging` value, a `sampleRate` outside 0–1, a
+non-positive `maxStringLength` or an invalid `responseHeader` name throws a `TypeError` at startup, not on the
 first request.
 
 ```ts
@@ -32,12 +32,12 @@ Workers Logs uses as the event level:
 
 ## Correlation
 
-| Option            | Type                    | Default             | Description                                                                                                                                        |
-| ----------------- | ----------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `traceHeader`     | `string \| false`       | `"x-request-id"`    | Request header read for `trace_id`.                                                                                                                |
-| `traceparent`     | `boolean`               | `true`              | Use the trace-id of a W3C `traceparent` header.                                                                                                    |
-| `generateTraceId` | `false \| () => string` | `crypto.randomUUID` | Generates an id when the request carries none. `false` omits `trace_id` in that case.                                                              |
-| `responseHeader`  | `string \| false`       | `false`             | Echo the trace id on the response, e.g. `"x-request-id"`. An existing header is left untouched. Skipped when the handler throws a non-Error value. |
+| Option            | Type                    | Default             | Description                                                                                                                                                                                                          |
+| ----------------- | ----------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `traceHeader`     | `string \| false`       | `"x-request-id"`    | Request header read for `trace_id`.                                                                                                                                                                                  |
+| `traceparent`     | `boolean`               | `true`              | Use the trace-id of a W3C `traceparent` header.                                                                                                                                                                      |
+| `generateTraceId` | `false \| () => string` | `crypto.randomUUID` | Generates an id when the request carries none. `false` omits `trace_id` in that case.                                                                                                                                |
+| `responseHeader`  | `string \| false`       | `false`             | Echo the trace id on the response, e.g. `"x-request-id"`. An existing header is left untouched. Skipped when the handler throws a non-Error value or the response can't be given a header (e.g. `Response.error()`). |
 
 `trace_id` resolution order:
 

@@ -181,12 +181,31 @@ const AUTO_LOGGING_MODES: ReadonlySet<string> = new Set<AutoLoggingMode>([
 ]);
 
 function validateConfig(config: LoggerConfig): void {
-  const { autoLogging, sampleRate } = config;
+  const { autoLogging, sampleRate, responseHeader } = config;
   if (autoLogging !== undefined && !AUTO_LOGGING_MODES.has(autoLogging)) {
     throw new TypeError(`hono-cloudflare-logger: unknown autoLogging "${String(autoLogging)}"`);
   }
   if (sampleRate !== undefined && !(sampleRate >= 0 && sampleRate <= 1)) {
     throw new TypeError("hono-cloudflare-logger: sampleRate must be between 0 and 1");
+  }
+  if (responseHeader !== undefined && responseHeader !== false) {
+    try {
+      // Throws for anything that isn't a valid header name, including "".
+      new Headers().has(responseHeader);
+    } catch {
+      throw new TypeError(`hono-cloudflare-logger: invalid responseHeader "${responseHeader}"`);
+    }
+  }
+}
+
+/** Echoes the trace id unless the response already has the header. Best effort. */
+function setResponseHeader(c: Context, name: string, traceId: string): void {
+  try {
+    if (!c.res.headers.has(name)) {
+      c.header(name, traceId);
+    }
+  } catch {
+    // Some responses can't be rebuilt with a new header (e.g. Response.error()).
   }
 }
 
@@ -353,8 +372,8 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
 
     if (responseHeader && !threw) {
       const traceId = requestLogger.traceId;
-      if (traceId !== undefined && !c.res.headers.has(responseHeader)) {
-        c.header(responseHeader, traceId);
+      if (traceId !== undefined) {
+        setResponseHeader(c, responseHeader, traceId);
       }
     }
 

@@ -210,6 +210,24 @@ describe("logger middleware", () => {
     expect(own.headers.get("x-request-id")).toBe("handler-set");
   });
 
+  it("leaves responses that can't take a header untouched", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ responseHeader: "x-request-id" }));
+    app.get("/network-error", () => Response.error());
+
+    const response = await app.request(createRequest("/network-error"));
+
+    expect(response.type).toBe("error");
+    expect(response.headers.has("x-request-id")).toBe(false);
+  });
+
+  it("rejects an invalid responseHeader name up front", () => {
+    expect(() => logger({ responseHeader: "bad header" })).toThrow(TypeError);
+    expect(() => logger({ responseHeader: "" })).toThrow(TypeError);
+    expect(() => logger({ responseHeader: "x-request-id" })).not.toThrow();
+    expect(() => logger({ responseHeader: false })).not.toThrow();
+  });
+
   it("does not read request headers when nothing is logged", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
     app.use("*", logger({ header: true, includeCfProperties: ["colo"] }));
