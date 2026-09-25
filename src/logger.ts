@@ -164,7 +164,12 @@ function currentRequest(core: LoggerCore): RequestMetadata | undefined {
 
   const version = core.requestVersion ? core.requestVersion(core.input) : 0;
   if (core.req === undefined || version !== core.reqStamp) {
-    core.req = core.buildRequest(core.input, core.output);
+    try {
+      core.req = core.buildRequest(core.input, core.output);
+    } catch {
+      // Request metadata is best effort: write the entry without `req`.
+      return undefined;
+    }
     core.reqStamp = version;
   }
   return core.req;

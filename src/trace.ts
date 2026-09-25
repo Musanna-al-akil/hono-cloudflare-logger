@@ -52,7 +52,8 @@ export function defaultTraceIdGenerator(): string {
  * `requestId()` middleware, the configured header, the W3C `traceparent`
  * trace-id, Cloudflare's `cf-ray`, then a generated id.
  */
-export function resolveTraceId(c: Context, options: TraceIdOptions): string | undefined {
+/** Inbound id, in precedence order: `requestId()` middleware, header, traceparent, cf-ray. */
+function inboundTraceId(c: Context, options: TraceIdOptions): string | undefined {
   const fromRequestIdMiddleware = (c.get as (key: string) => unknown)("requestId");
   if (isValidTraceId(fromRequestIdMiddleware)) {
     return fromRequestIdMiddleware;
@@ -73,8 +74,17 @@ export function resolveTraceId(c: Context, options: TraceIdOptions): string | un
   }
 
   const ray = c.req.header("cf-ray");
-  if (isValidTraceId(ray)) {
-    return ray;
+  return isValidTraceId(ray) ? ray : undefined;
+}
+
+export function resolveTraceId(c: Context, options: TraceIdOptions): string | undefined {
+  try {
+    const inbound = inboundTraceId(c, options);
+    if (inbound !== undefined) {
+      return inbound;
+    }
+  } catch {
+    // Unreadable request: fall through to a generated id.
   }
 
   if (options.generate) {

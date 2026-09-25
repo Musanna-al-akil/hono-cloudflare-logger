@@ -99,6 +99,24 @@ function hasKeys(record: Record<string, unknown>): boolean {
   return false;
 }
 
+/**
+ * Registered pattern of the matched route. `routePath()` reads match results
+ * through a symbol owned by its copy of hono; when the app's request comes
+ * from another copy (e.g. two installed versions), fall back to the
+ * request's own getter.
+ */
+function resolveRoutePath(c: Context): string | undefined {
+  try {
+    return routePath(c);
+  } catch {
+    try {
+      return (c.req as { routePath?: string }).routePath;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
 function buildRequest(
   resolved: ResolvedConfig,
   c: Context,
@@ -109,7 +127,7 @@ function buildRequest(
     path: c.req.path,
   };
 
-  const route = routePath(c);
+  const route = resolveRoutePath(c);
   if (route) {
     req.route = route;
   }
