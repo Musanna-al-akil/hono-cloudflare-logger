@@ -19,5 +19,5 @@
     },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "tests", "examples"]
+  "include": ["src", "tests", "examples", "bench"]
 }

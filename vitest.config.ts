@@ -6,5 +6,8 @@ export default defineConfig({
     environment: "node",
     restoreMocks: true,
     clearMocks: true,
+    benchmark: {
+      include: ["bench/**/*.bench.ts"],
+    },
   },
 });

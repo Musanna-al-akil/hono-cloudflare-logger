@@ -1,0 +1,2 @@
+
+dist/index.js    raw   3611 B | min   3607 B | min+gzip  1615 B (budget 4096 B)

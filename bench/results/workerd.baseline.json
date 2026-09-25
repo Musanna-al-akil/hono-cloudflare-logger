@@ -1,0 +1,96 @@
+{
+  "runtime": "workerd",
+  "results": [
+    {
+      "group": "logger",
+      "name": "construct logger (6 redact keys)",
+      "hz": 6395138.941176471,
+      "rme": 0.4340043834312471,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "info, small payload",
+      "hz": 1554550.2925631795,
+      "rme": 0.6647044126366398,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "debug below min level (filtered)",
+      "hz": 152379945.7142857,
+      "rme": 0.47617994420416854,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "info, nested payload + 6 redact keys",
+      "hz": 437363.2993197279,
+      "rme": 0.37076139585364026,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "info, context + 6 redact keys",
+      "hz": 859783.7647058824,
+      "rme": 0.33717592917518063,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "error with Error instance",
+      "hz": 1316229.5358143258,
+      "rme": 0.567740743328973,
+      "samples": 20
+    },
+    {
+      "group": "logger",
+      "name": "info, wide payload (50 fields)",
+      "hz": 280533.67346938775,
+      "rme": 0.4850173040313991,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "control: no logger middleware",
+      "hz": 620488.4705882352,
+      "rme": 0.43400438343124853,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "silent, no logs",
+      "hz": 359124.8495705974,
+      "rme": 0.6797286224784592,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "silent, 3 handler logs + redact",
+      "hz": 147071.42857142855,
+      "rme": 0.4427368659952555,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "access log",
+      "hz": 266229.3732536956,
+      "rme": 0.7354062288738441,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "access log + 15 headers + cf + redact",
+      "hz": 85484.6343537415,
+      "rme": 0.559319857906825,
+      "samples": 20
+    },
+    {
+      "group": "middleware",
+      "name": "error mode, thrown error",
+      "hz": 147756.64952613792,
+      "rme": 0.7365341805365305,
+      "samples": 20
+    }
+  ]
+}
