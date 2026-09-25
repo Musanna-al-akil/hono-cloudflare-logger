@@ -314,6 +314,34 @@ describe("logger middleware", () => {
     });
   });
 
+  it("censors Cloudflare Access and other token headers when capturing all headers", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ header: true }));
+    app.get("/access", (c) => {
+      c.get("logger").info("access");
+      return c.text("ok");
+    });
+
+    await app.request(
+      createRequest("/access", {
+        headers: {
+          "cf-access-client-id": "client.access",
+          "cf-access-client-secret": "secret",
+          "cf-access-jwt-assertion": "jwt",
+          "x-auth-token": "token",
+        },
+      }),
+    );
+
+    const req = onlyEntry(spies).req as Record<string, unknown>;
+    expect(req.headers).toMatchObject({
+      "cf-access-client-id": "client.access",
+      "cf-access-client-secret": "[REDACTED]",
+      "cf-access-jwt-assertion": "[REDACTED]",
+      "x-auth-token": "[REDACTED]",
+    });
+  });
+
   it("records the matched route pattern alongside the concrete path", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
     app.use("*", logger({ autoLogging: "access" }));

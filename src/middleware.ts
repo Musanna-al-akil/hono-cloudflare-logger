@@ -29,7 +29,9 @@ const SENSITIVE_HEADERS: ReadonlySet<string> = new Set([
   "cookie",
   "set-cookie",
   "x-api-key",
+  "x-auth-token",
   "cf-access-jwt-assertion",
+  "cf-access-client-secret",
 ]);
 
 /** Configuration normalized once per `logger()` call instead of once per request. */

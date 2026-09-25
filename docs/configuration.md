@@ -64,8 +64,8 @@ cannot inject control characters into logs.
 request and reused, and it is rebuilt when Hono moves from middleware to the
 route handler, so `route` stays accurate.
 
-`authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key` and
-`cf-access-jwt-assertion` are always replaced with the `censor` value when
+`authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`,
+`x-auth-token`, `cf-access-jwt-assertion` and `cf-access-client-secret` are always replaced with the `censor` value when
 headers are captured.
 
 ## Redaction and size
