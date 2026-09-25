@@ -1,22 +1,45 @@
 # hono-cloudflare-logger
 
-cloudflare-workers first, zero-runtime-dependency structured logging middleware for [Hono](https://hono.dev/) with newline-delimited JSON (NDJSON) output.
+Structured logging for [Hono](https://hono.dev/) on Cloudflare Workers. It is
+built around how Workers Logs actually stores and bills log events. Zero runtime
+dependencies, about 4.7 KB min+gzip.
 
-## Features
+```ts
+import { Hono } from "hono";
+import { logger } from "hono-cloudflare-logger";
 
-- RFC 5424 log levels: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`
-- Request-scoped logger via `c.get('logger')`
-- Auto logging modes: `silent`, `access`, `error`
-- Deep case-insensitive key redaction
-- Trace ID extraction via configurable header with `cf-ray` fallback
-- Error serialization with `message` and `stack` only
-- Circular serialization fallback without crashing request handling
+const app = new Hono();
+app.use("*", logger({ autoLogging: "access" }));
 
-## Requirements
+app.get("/users/:id", (c) => {
+  c.var.logger.info("user loaded", { id: c.req.param("id") });
+  return c.json({ ok: true });
+});
 
-- Node.js `22+` (tooling)
-- Hono `^4` (peer dependency)
-- ESM consumers
+export default app;
+```
+
+```js
+// What Workers Logs receives (an object, so every field is indexed and queryable)
+{
+  level: "info", msg: "user loaded", time: "2026-09-25T12:00:00.000Z",
+  trace_id: "8f1c2a3b4c5d6e7f-SIN",
+  data: { id: "42" },
+  req: { method: "GET", path: "/users/42", route: "/users/:id" }
+}
+```
+
+## Why
+
+| Need on Workers                                      | hono-cloudflare-logger                                              | Typical Node logger / Hono `logger()`  |
+| ---------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------- |
+| Fields indexed by Workers Logs                       | Logs **objects** by default                                         | Strings: text search only              |
+| Correct level in the dashboard                       | `warning` → `console.warn`, `debug` → `console.debug`, …            | Often everything on `console.log`      |
+| Low-cardinality grouping                             | `req.route` (`/users/:id`)                                          | Raw paths                              |
+| Correlation                                          | `requestId()`, `x-request-id`, W3C `traceparent`, `cf-ray`, or UUID | Manual                                 |
+| Per-event billing                                    | `bufferUntilError`, `sampleRate`, `skip`                            | Log everything or nothing              |
+| Safe entries (secrets, cycles, BigInt, 256 KB limit) | Built-in redaction, censoring and truncation                        | Crashes or leaks unless configured     |
+| Runtime fit                                          | No `node:*` imports in the core, no transports                      | Transports that do not run on the edge |
 
 ## Install
 
@@ -24,171 +47,152 @@ cloudflare-workers first, zero-runtime-dependency structured logging middleware 
 npm install hono hono-cloudflare-logger
 ```
 
-## Install From JSR
-
 ```bash
-deno add jsr:@musanna/hono-cloudflare-logger
+npx jsr add @musanna/hono-cloudflare-logger   # or: deno add jsr:@musanna/hono-cloudflare-logger
 ```
 
-```bash
-npx jsr add @musanna/hono-cloudflare-logger
+Requires `hono` `^4.8.0`. ESM only. Prereleases use the `beta` dist-tag:
+`npm install hono-cloudflare-logger@beta`.
+
+Enable Workers Logs in `wrangler.jsonc`:
+
+```jsonc
+{ "observability": { "enabled": true } }
 ```
 
-## Beta Releases
+## Features
 
-Stable releases are published under the default `latest` dist-tag, while prerelease builds are published under the `beta` dist-tag.
+- **Workers-native output.** Objects by default (`format: "json"` for NDJSON strings, `"pretty"` for local dev), with a console method that matches each level.
+- **Request logger on `c.var.logger`.** Typed without app generics, with `setContext()`, `child()` and `traceId`.
+- **Lazy request metadata.** Headers, `cf` and route are read only when something is actually logged. Requests that never log stay cheap.
+- **Automatic entries.** `access` writes one entry per request (`info` 2xx/3xx, `warning` 4xx, `error` 5xx or thrown), with `status` and `duration_ms`. `error` writes only the failures.
+- **Cost control.**
+  - `bufferUntilError` keeps debug/info entries in memory and writes them only when the request fails.
+  - `sampleRate` samples successful access entries.
+  - `skip` drops entries such as health checks.
+- **Level per request.** `level: (c) => c.env.LOG_LEVEL` changes verbosity without a deploy.
+- **Tracing.** `trace_id` comes from Hono's `requestId()`, a header, W3C `traceparent` or `cf-ray`, or is generated with `crypto.randomUUID()`. `responseHeader` echoes it on the response.
+- **Errors.** `name`, `message`, `stack`, `code`, `status` (e.g. `HTTPException`), `cause` chains, `AggregateError.errors`, and non-Error throws.
+- **Safety.**
+  - Key redaction that ignores case and separators (`apiKey` = `api_key`).
+  - Credential headers are always censored.
+  - Cycles, BigInt, Map/Set and binary values are handled, and long strings are truncated.
+  - A log call never throws.
+- **Outside Hono.** `createLogger()` for `scheduled`, `queue` and Durable Objects. `getLogger()` from `hono-cloudflare-logger/context` works anywhere in a request (uses `hono/context-storage`).
+- **Custom sinks.** Pass a function or `{ write, flush }`. `flush` runs through `executionCtx.waitUntil()`.
 
-```bash
-npm install hono-cloudflare-logger@beta
-```
-
-For prerelease versions (such as `0.1.0-beta.0`), publish with an explicit tag:
-
-```bash
-npm publish --tag beta
-```
-
-## Quick Start
+## Usage
 
 ```ts
 import { Hono } from "hono";
-import { logger, type LoggerVariables } from "hono-cloudflare-logger";
+import { requestId } from "hono/request-id";
+import { logger } from "hono-cloudflare-logger";
 
-const app = new Hono<{ Variables: LoggerVariables }>();
+type Env = { Bindings: { LOG_LEVEL?: string } };
+const app = new Hono<Env>();
 
+app.use("*", requestId());
 app.use(
   "*",
-  logger({
-    autoLogging: "access",
-    redactKeys: ["authorization", "password"],
+  logger<Env>({
+    level: (c) => c.env.LOG_LEVEL, // "debug" in dev, "info" in production
+    autoLogging: "error",
+    bufferUntilError: true,
     includeCfProperties: ["colo", "country"],
+    header: ["user-agent"],
+    redactKeys: ["password", "token"],
   }),
 );
 
-app.post("/login", async (c) => {
-  const log = c.get("logger");
-  log.setContext({ requestArea: "auth" });
+app.post("/orders", async (c) => {
+  const log = c.var.logger;
+  log.setContext({ tenant: c.req.header("x-tenant") });
 
-  log.info("Login started");
+  const db = log.child({ component: "db" });
+  db.debug("inserting order"); // written only if this request fails
 
   try {
-    log.info("Login successful", { userId: "user_123" });
-    return c.json({ ok: true });
+    // ...
+    return c.json({ ok: true }, 201);
   } catch (error) {
-    log.error("Login failed", error as Error);
+    log.error("order failed", error, { step: "insert" });
     return c.json({ ok: false }, 500);
   }
 });
-
-export default app;
 ```
 
-## API
+Outside a request:
 
-### `logger(config?: LoggerConfig)`
+```ts
+import { createLogger } from "hono-cloudflare-logger";
 
-Returns a Hono middleware that injects a per-request logger at `c.get('logger')`.
-
-### `class Logger`
-
-- `debug/info/notice/warning(msg: string, data?: Record<string, any>, options?: { dataPlacement?: 'trace' | 'flat' }): void`
-- `error/critical/alert/emergency(msg: string, err?: Error, data?: Record<string, any>, options?: { dataPlacement?: 'trace' | 'flat' }): void`
-- `setContext(context: Record<string, any>): void`
-
-Application log `data` is nested under `trace` by default. Use `dataPlacement: 'flat'` only when you need top-level fields.
-Middleware auto logs keep `status` and `duration_ms` at the top level.
-Serialized key order is deterministic: `level`, `msg`, `trace` (if present), `time`, then remaining fields.
-
-## LoggerConfig
-
-| Option                | Type                              | Default        | Description                                              |
-| --------------------- | --------------------------------- | -------------- | -------------------------------------------------------- |
-| `level`               | `SyslogLevel`                     | `info`         | Minimum level to emit                                    |
-| `traceHeader`         | `string`                          | `X-Request-Id` | Primary header for `trace_id` extraction                 |
-| `autoLogging`         | `'silent' \| 'access' \| 'error'` | `silent`       | Automatic request logging behavior                       |
-| `includeCfProperties` | `readonly string[]`               | `[]`           | Cloudflare `c.req.raw.cf` keys to include under `req.cf` |
-| `redactKeys`          | `readonly string[]`               | `[]`           | Keys to redact recursively as `[REDACTED]`               |
-| `header`              | `boolean \| readonly string[]`    | `false`        | `false` disable, `true` all headers, or allowlisted keys |
-
-## Log Schema
-
-Each output line is NDJSON with newline suffix:
-
-```json
-{
-  "level": "info",
-  "msg": "Login successful",
-  "trace": {
-    "userId": "user_123"
+export default {
+  fetch: app.fetch,
+  async scheduled(controller, env) {
+    const log = createLogger({
+      traceId: `cron-${controller.scheduledTime}`,
+      bindings: { cron: controller.cron },
+    });
+    log.info("cleanup started");
   },
-  "time": "2026-02-26T12:00:00.000Z",
-  "trace_id": "abc-123",
-  "req": {
-    "method": "GET",
-    "url": "/login",
-    "cf": {
-      "colo": "SJC"
-    }
-  }
-}
+};
 ```
 
-## Docs
+## Log schema
 
-- [Architecture](docs/architecture.md)
-- [API Reference](docs/api.md)
-- [Configuration Guide](docs/configuration.md)
+```js
+{
+  level: "error",              // debug | info | notice | warning | error | critical | alert | emergency
+  msg: "order failed",
+  time: "2026-09-25T12:00:00.000Z", // timestamp: false to omit
+  trace_id: "b7a3…",
+  tenant: "acme",              // setContext() / child() fields
+  data: { step: "insert" },    // per-call data (placement: "flat" merges it instead)
+  err: { name: "TypeError", message: "…", stack: "…", cause: { … } },
+  req: { method: "POST", path: "/orders", route: "/orders", headers: { … }, cf: { … } },
+}
+// Automatic entries also carry top-level `status` and `duration_ms`.
+```
+
+## Documentation
+
+- [Configuration](docs/configuration.md): every option and its default
+- [API reference](docs/api.md)
+- [Cloudflare guide](docs/cloudflare.md): Workers Logs setup, queries, cost control
 - [Recipes](docs/recipes.md)
-
-## Examples
-
-- [Minimal example](examples/minimal)
-- [Advanced example](examples/advanced)
+- [Architecture](docs/architecture.md)
+- [Migrating from 0.1](docs/migration-0.2.md)
+- [Benchmarks](BENCHMARKS.md): before/after in Node.js and workerd
+- Examples: [minimal](examples/minimal), [advanced](examples/advanced)
 
 ## Development
 
 ```bash
 npm install
-npm run format
-npm run format:check
-npm run lint
-npm run test
-npm run build
+npm run lint           # format check, typecheck, oxlint
+npm test               # unit, integration and type tests (Node)
+npm run test:workers   # the same runtime behaviour inside workerd
+npm run test:coverage
+npm run bench:compare  # before/after benchmarks, Node and workerd
+npm run build && npm run size
 npm run prepublish:check
 ```
 
-## Formatting & Linting
-
-- VS Code auto-formats on save with `oxfmt` when the Oxc extension is installed.
-- `npm run lint` now gates on formatting (`npm run format:check`) before type-checking and linting.
-- If lint fails due to formatting drift, run `npm run format` to fix it.
+Contributor and AI agent notes: [AGENTS.md](AGENTS.md).
 
 ## Release
 
-This project publishes to both npm and JSR:
-
-- npm publishes built artifacts from `dist`
-- JSR publishes source TypeScript from `src`
-
-Stable release (`latest`):
+npm gets the built `dist`; JSR gets the TypeScript source. Versions come from
+changesets:
 
 ```bash
 npm run changeset
-npm run version-packages
-npm run release
+npm run version-packages   # bumps package.json, jsr.json and CHANGELOG.md
 ```
 
-Beta prerelease (`beta`):
+Pushing a `vX.Y.Z-beta.N` tag publishes the npm `beta` dist-tag, and any `v*` tag
+publishes to JSR (see `.github/workflows`).
 
-```bash
-npm run changeset
-npm run version-packages
-npm publish --tag beta
-```
+## License
 
-JSR publish (tag-driven GitHub Action using `JSR_TOKEN` secret):
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+MIT

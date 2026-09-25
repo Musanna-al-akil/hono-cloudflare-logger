@@ -1,102 +1,151 @@
-# API Reference
+# API reference
 
 ## Exports
 
 ```ts
-export { logger } from "hono-cloudflare-logger";
-export { Logger } from "hono-cloudflare-logger";
+// "hono-cloudflare-logger"
+export { logger, createLogger, Logger };
 export type {
-  SyslogLevel,
   LoggerConfig,
-  LogContext,
-  LogEntry,
-  LoggerVariables,
+  LoggerOptions,
+  LevelResolver,
+  SyslogLevel,
+  LogFormat,
   AutoLoggingMode,
+  LogData,
+  LogWriteOptions,
+  DataPlacement,
+  LogEntry,
+  SerializedError,
   RequestMetadata,
-  ErrorMetadata,
-} from "hono-cloudflare-logger";
+  CfPropertyKey,
+  LogSink,
+  LogSinkObject,
+  LogSinkInfo,
+  LoggerVariables,
+  LogContext /* deprecated: LogData */,
+  ErrorMetadata /* deprecated: SerializedError */,
+};
+
+// "hono-cloudflare-logger/context"
+export { getLogger };
 ```
 
-## `logger(config?: LoggerConfig)`
+Importing the root entry also augments Hono's `ContextVariableMap`, so
+`c.var.logger` and `c.get("logger")` are typed as `Logger` in every app with no
+`Variables` generic. `LoggerVariables` is still exported for apps that list
+their variables explicitly.
 
-Creates middleware that injects a request-scoped `Logger` into Hono context.
+## `logger(config?)`
 
 ```ts
-const app = new Hono<{ Variables: LoggerVariables }>();
-app.use("*", logger({ autoLogging: "access" }));
+function logger<E extends Env = any>(config?: LoggerConfig<E>): MiddlewareHandler<E>;
 ```
 
-`LoggerConfig.header` defaults to `false` to avoid request-header capture costs. Set
-`header: true` for full headers, or pass an allowlist array for selected headers.
-Trace ID extraction checks `traceHeader` first, then falls back to `cf-ray`.
-
-### Context access
+Creates the middleware that puts a request-scoped `Logger` on `c.var.logger`.
+Pass your app's `Env` to type `c.env` in `level` and `skip`:
 
 ```ts
-const log = c.get("logger");
-log.info("hello");
+type AppEnv = { Bindings: { LOG_LEVEL?: string } };
+app.use("*", logger<AppEnv>({ level: (c) => c.env.LOG_LEVEL }));
 ```
 
-Serialized output order is deterministic and begins with `level`, `msg`, then `trace` (if present), then `time`.
+The middleware never swallows errors: Hono's `onError` still handles thrown
+errors, and a non-Error throw is rethrown after it has been logged. See
+[configuration](configuration.md) for every option.
+
+## `createLogger(options?)`
+
+```ts
+function createLogger(options?: LoggerOptions): Logger;
+```
+
+A logger with no Hono context, for `scheduled`, `queue`, Durable Objects or
+scripts. Options: `level`, `traceId`, `bindings`, `format`, `sink`, `timestamp`,
+`redactKeys`, `censor`, `maxStringLength`. `new Logger(options)` does the same.
+
+## `getLogger()`
+
+```ts
+import { getLogger } from "hono-cloudflare-logger/context";
+function getLogger(): Logger;
+```
+
+Returns the current request's logger from anywhere in the request's async call
+tree, with no need to pass `c` around. It requires Hono's
+[`contextStorage()`](https://hono.dev/docs/middleware/builtin/context-storage)
+middleware on the same routes, and the `nodejs_compat` (or
+`nodejs_als`) compatibility flag. Outside a request it returns a shared default
+logger (`info` level, object format). It lives in its own entry point so the
+main entry never depends on `AsyncLocalStorage`.
 
 ## `class Logger`
 
-### Standard methods
+```ts
+debug(msg: string, data?: LogData, options?: LogWriteOptions): void;
+info(msg: string, data?: LogData, options?: LogWriteOptions): void;
+notice(msg: string, data?: LogData, options?: LogWriteOptions): void;
+warning(msg: string, data?: LogData, options?: LogWriteOptions): void;
 
-- `debug(msg, data?)`
-- `info(msg, data?)`
-- `notice(msg, data?)`
-- `warning(msg, data?)`
+error(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void;
+critical(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void;
+alert(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void;
+emergency(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void;
 
-By default, `data` is placed under `trace` in the output entry.
-When using `{ dataPlacement: 'flat' }`, reserved keys (`level`, `msg`, `time`, `trace`) are ignored to keep canonical output fields stable.
-
-### Error methods
-
-- `error(msg, err?, data?)`
-- `critical(msg, err?, data?)`
-- `alert(msg, err?, data?)`
-- `emergency(msg, err?, data?)`
-
-You can override placement with an optional final argument:
-
-- `info(msg, data, { dataPlacement: 'flat' })`
-- `error(msg, err, data, { dataPlacement: 'flat' })`
-
-`err` is serialized as:
-
-```json
-{
-  "message": "...",
-  "stack": "..."
-}
+setContext(context: LogData): void;
+child(bindings: LogData): Logger;
+readonly traceId: string | undefined;
 ```
 
-### Context mutation
-
-- `setContext(context)` shallow-merges onto request logger context.
-- Last write wins for conflicting keys.
+- **Log calls never throw.** If an entry cannot be written, one fallback line is written with `console.error`. It carries `original_level`, `original_msg`, `trace_id` and `reason`.
+- **Levels are checked first.** A call below the minimum level returns before doing any work.
+- **`data`** is sanitized and nested under `data`. `{ placement: "flat" }` merges its keys into the entry instead.
+- **`err`** accepts any thrown value (`catch (error)` needs no cast) and is serialized to `SerializedError`.
+- **`setContext()`** merges fields into every later entry from this logger. They are sanitized once, when set.
+- **`child(bindings)`** returns a logger that shares the request, trace id, level, output and buffer, and has its own copy of the context plus `bindings`. Changes to one logger's context don't affect the other.
+- **`traceId`** is the resolved correlation id, handy for error responses or for passing to downstream services.
+- **Reserved keys.** Context, bindings and flat data can't overwrite `level`, `msg`, `time`, `trace_id`, `data`, `err` or `req`. Those keys are ignored.
 
 ## Types
 
-### `SyslogLevel`
-
 ```ts
-type SyslogLevel =
-  | "debug"
-  | "info"
-  | "notice"
-  | "warning"
-  | "error"
-  | "critical"
-  | "alert"
-  | "emergency";
+interface LogEntry {
+  level: SyslogLevel;
+  msg: string;
+  time?: string;
+  trace_id?: string;
+  data?: LogData;
+  err?: SerializedError;
+  req?: RequestMetadata;
+  [key: string]: unknown; // context, bindings, flat data, status, duration_ms
+}
+
+interface SerializedError {
+  name: string; // "NonError" for thrown non-Error values
+  message: string;
+  stack?: string;
+  code?: string | number;
+  status?: number; // e.g. HTTPException
+  cause?: unknown; // nested SerializedError, up to 3 levels
+  errors?: SerializedError[]; // AggregateError, first 10
+}
+
+interface RequestMetadata {
+  method: string;
+  path: string;
+  route?: string;
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  cf?: Record<string, unknown>;
+}
+
+type LogSink = (entry: LogEntry, info: { level: SyslogLevel; priority: number }) => void;
+interface LogSinkObject {
+  write: LogSink;
+  flush?: () => Promise<void>;
+}
 ```
 
-### `LoggerVariables`
-
-```ts
-type LoggerVariables = {
-  logger: Logger;
-};
-```
+Keys in an entry follow this order: `level`, `msg`, `time`, `trace_id`, then
+context fields, then `data` (or the flat data, `status` and `duration_ms`),
+then `err`, then `req`.
