@@ -21,6 +21,13 @@ import { reportWriteFailure } from "./sink.ts";
 import { defaultTraceIdGenerator, resolveTraceId, type TraceIdOptions } from "./trace.ts";
 import type { AutoLoggingMode, LevelResolver, LoggerConfig, RequestMetadata } from "./types.ts";
 
+/**
+ * `c.set` narrowed to the logger key. The `ContextVariableMap` augmentation
+ * (npm only, see augment.ts) is not visible from the JSR entry, so the key
+ * can't come from `c.set`'s own signature.
+ */
+type SetLogger = (key: "logger", value: Logger) => void;
+
 const DEFAULT_TRACE_HEADER = "x-request-id";
 
 /** Credentials that never belong in logs, whatever the header options say. */
@@ -336,7 +343,7 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
   if (autoLogging === "silent" && !output.flush && !responseHeader && !bufferUntilError) {
     // Nothing happens after the handler, so skip the timer and the extra async frame.
     return (c, next) => {
-      c.set("logger", createLoggerFromCore(createCore(c)) as never);
+      (c.set as SetLogger)("logger", createLoggerFromCore(createCore(c)));
       return next();
     };
   }
@@ -345,7 +352,7 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
     const startTime = Date.now();
     const core = createCore(c);
     const requestLogger = createLoggerFromCore(core);
-    c.set("logger", requestLogger as never);
+    (c.set as SetLogger)("logger", requestLogger);
 
     let threw = false;
     let thrownError: unknown;

@@ -19,7 +19,7 @@
   - `trace_id` from Hono's `requestId()`, `traceHeader`, W3C `traceparent`, `cf-ray` or a generated id. `responseHeader` echoes it.
   - `level` accepts a function, e.g. `(c) => c.env.LOG_LEVEL`. Also new: `child()`, `traceId`, and `createLogger()` for code outside Hono.
   - `getLogger()` from the new `hono-cloudflare-logger/context` entry (uses `hono/context-storage`).
-  - `c.var.logger` is typed without app generics.
+  - `c.var.logger` is typed without app generics (npm; on JSR, use `Hono<{ Variables: LoggerVariables }>`).
   - Automatic entries use status-based levels (`warning` for 4xx, `error` for 5xx with `err`). Also new: `sampleRate`, `skip` and `bufferUntilError`.
   - `sink` (a function or `{ write, flush }`, flushed via `waitUntil`), plus `timestamp`, `censor`, `maxStringLength` and `query`.
   - Redaction ignores case and separators. Credential headers are always censored. Cycles, BigInt, Map/Set, binary data and long strings are handled.

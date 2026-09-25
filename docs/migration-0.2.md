@@ -33,7 +33,7 @@ apps need only the changes in the first section; everything else is additive.
 
 ## New, opt-in
 
-- `c.var.logger` is typed without `Hono<{ Variables: LoggerVariables }>`, so you can drop the generic.
+- `c.var.logger` is typed without `Hono<{ Variables: LoggerVariables }>`, so you can drop the generic. npm only: JSR doesn't allow module augmentation, so keep the generic there.
 - `level: (c) => c.env.LOG_LEVEL`.
 - `child(bindings)` and `log.traceId`.
 - `createLogger()` for code outside a request, and `getLogger()` from `hono-cloudflare-logger/context`.

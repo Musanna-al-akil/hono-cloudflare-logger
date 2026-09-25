@@ -23,7 +23,7 @@ jobs:
           # Trusted publishing needs npm >= 11.5.1, which ships with Node 24.
           node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
+          # No registry-url: its `.npmrc` token line makes npm skip the OIDC exchange.
 
       - name: Install dependencies
         run: npm ci
@@ -60,7 +60,5 @@ jobs:
         run: npm pack
 
       - name: Publish beta
-        # Uses the trusted publisher when configured on npmjs.com, else NPM_TOKEN.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Trusted publisher on npmjs.com; its "Allowed actions" must include `npm publish`.
         run: npm publish --tag beta --access public

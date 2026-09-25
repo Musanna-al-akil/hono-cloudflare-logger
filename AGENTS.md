@@ -29,7 +29,8 @@ See [docs/architecture.md](docs/architecture.md). In short:
 - `trace.ts` — `trace_id` precedence and `traceparent`.
 - `sink.ts` — writers.
 - `levels.ts`, `time.ts`, `types.ts`.
-- `augment.ts` — the `ContextVariableMap` augmentation.
+- `mod.ts` — public exports (the JSR entry); `index.ts` — the npm entry, `mod.ts` plus `augment.ts`.
+- `augment.ts` — the `ContextVariableMap` augmentation (npm only).
 - `context.ts` — `getLogger()`.
 
 ## Invariants (do not break)
@@ -43,8 +44,8 @@ See [docs/architecture.md](docs/architecture.md). In short:
 7. **Zero runtime dependencies.** The main entry imports neither `node:*` nor `hono/context-storage`; only `context.ts` (the `./context` entry) uses the latter.
 8. **JSR constraints.**
    - `.ts` import extensions and explicit return types on exported functions (no slow types).
-   - No ambient `declare module` in the entry: keep it in `augment.ts`.
-   - Check with `npm run check:jsr`.
+   - No `declare module` or `declare global` anywhere JSR can reach. JSR rejects augmentation on the server, and the dry run doesn't catch it. The augmentation lives in `augment.ts`, which only the npm entry (`index.ts`) imports; the JSR entry is `mod.ts`. Code must not depend on the augmentation for types (see `SetLogger` in `middleware.ts`).
+   - Check with `npm run check:jsr`, which runs `scripts/check-jsr.mjs` before the dry run.
 9. **Reserved entry keys**: `level`, `msg`, `time`, `trace_id`, `data`, `err`, `req`. Context and flat data can't overwrite them.
 
 ## Commands

@@ -11,8 +11,9 @@
 
 | File                | Responsibility                                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`      | Public exports; imports `augment.ts`.                                                                                                       |
-| `src/augment.ts`    | `ContextVariableMap` augmentation (`c.var.logger`). Kept in its own module because JSR rejects ambient `declare module` in the entry.       |
+| `src/mod.ts`        | Public exports. The JSR entry.                                                                                                              |
+| `src/index.ts`      | The npm entry: `mod.ts` plus `augment.ts`.                                                                                                  |
+| `src/augment.ts`    | `ContextVariableMap` augmentation (`c.var.logger`). npm only: JSR rejects module augmentation, so jsr.json excludes it.                     |
 | `src/middleware.ts` | `logger()`: config validation, per-request core, lazy `req` metadata, automatic entries, buffer flush/discard, response header, sink flush. |
 | `src/logger.ts`     | `Logger`, `createLogger()`, the shared per-request `LoggerCore`, entry assembly and buffering.                                              |
 | `src/config.ts`     | Resolves output options (format, sink, redaction, limits) once. Validates levels and formats.                                               |

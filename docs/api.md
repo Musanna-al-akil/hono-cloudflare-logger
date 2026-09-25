@@ -36,6 +36,10 @@ Importing the root entry also augments Hono's `ContextVariableMap`, so
 `Variables` generic. `LoggerVariables` is still exported for apps that list
 their variables explicitly.
 
+The JSR package doesn't include the augmentation, because JSR doesn't allow
+packages to augment other modules. With JSR, type the app with
+`new Hono<{ Variables: LoggerVariables }>()`.
+
 ## `logger(config?)`
 
 ```ts

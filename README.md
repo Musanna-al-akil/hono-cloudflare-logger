@@ -54,6 +54,10 @@ npx jsr add @musanna/hono-cloudflare-logger   # or: deno add jsr:@musanna/hono-c
 Requires `hono` `^4.8.0`. ESM only. Prereleases use the `beta` dist-tag:
 `npm install hono-cloudflare-logger@beta`.
 
+JSR doesn't allow module augmentation, so the JSR package can't type
+`c.var.logger` for you. Declare it on the app instead:
+`new Hono<{ Variables: LoggerVariables }>()`.
+
 Enable Workers Logs in `wrangler.jsonc`:
 
 ```jsonc
