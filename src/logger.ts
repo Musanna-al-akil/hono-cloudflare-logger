@@ -79,7 +79,9 @@ function emit(core: LoggerCore, entry: LogEntry, priority: number): void {
         buffer.shift();
         core.bufferDropped += 1;
       }
-      buffer.push({ entry, priority });
+      // Sanitized values still reference the caller's objects; copy them so
+      // changes made after the call don't show up when the buffer is written.
+      buffer.push({ entry: structuredClone(entry), priority });
       return;
     }
 

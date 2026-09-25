@@ -82,7 +82,7 @@ Every entry is made safe to write whatever the options are:
 - BigInt and symbols become strings, and functions are dropped.
 - `Map` → object, `Set` → array, binary data → `"[Uint8Array(4)]"`, and anything with `toJSON()` (e.g. `Date`) uses it.
 - Class instances are copied as plain objects, and values whose getters throw become `"[Unserializable]"`.
-- Unchanged objects are passed by reference, not copied.
+- Unchanged objects are passed by reference, not copied. A `sink` that keeps entries past the call (e.g. to batch them) should copy them, or avoid changing logged objects.
 
 ## Automatic entries and cost control
 
@@ -109,7 +109,8 @@ clock between I/O operations.
 
 - Entries below `warning` are held in memory, up to 100 per request; the oldest are dropped first.
 - If the request fails (a 5xx, a thrown error, or any `error`-level entry), the buffer is written in order before the failure entry, together with a count of dropped entries. Later entries in that request are written straight through.
-- If the request succeeds, the buffer is discarded.
+- If the request succeeds, the buffer is discarded. The automatic `access` entry is still written.
+- Held entries are copied (`structuredClone`), so changes you make to a logged object afterwards don't show up in them.
 - Warnings and errors are never buffered.
 
 ## Standalone loggers

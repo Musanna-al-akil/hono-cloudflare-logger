@@ -97,8 +97,11 @@ Tail Workers, test spies) always sees the entry.
 
 ## Buffering (`bufferUntilError`)
 
-The core holds up to 100 entries below `warning`. An `error`-level entry
+The core holds up to 100 entries below `warning`, each copied with
+`structuredClone` because sanitized values can still reference the caller's
+objects. An `error`-level entry
 flushes the buffer before it's written: a "dropped" notice first, if any
 entries were dropped, then the entries in order. After that, buffering stops
 for the request. When the response is ready, the middleware flushes the buffer
-if the request failed (thrown, 5xx) and discards it otherwise.
+if the request failed (thrown, 5xx) and discards it otherwise, before it writes
+the automatic entry.

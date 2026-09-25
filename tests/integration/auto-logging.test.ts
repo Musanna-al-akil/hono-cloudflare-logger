@@ -256,6 +256,24 @@ describe("automatic request entries", () => {
       ]);
     });
 
+    it("writes buffered entries as they were when logged", async () => {
+      const app = new Hono();
+      app.use("*", logger({ bufferUntilError: true, format: "pretty" }));
+      app.get("/", (c) => {
+        const state: Record<string, unknown> = { step: 1 };
+        c.var.logger.info("step", state);
+        state.step = 2;
+        state.self = state;
+        c.var.logger.error("boom");
+        return c.text("ok");
+      });
+
+      await app.request("/");
+
+      expect(spies.info.mock.calls[0]?.[0]).toContain('data={"step":1}');
+      expect(spies.error).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the newest entries and reports how many were dropped", async () => {
       const app = new Hono();
       app.use("*", logger({ bufferUntilError: true, autoLogging: "error" }));
