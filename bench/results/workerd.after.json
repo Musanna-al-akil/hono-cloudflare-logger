@@ -4,99 +4,99 @@
     {
       "group": "logger",
       "name": "construct logger (6 redact keys)",
-      "hz": 6331038.060507221,
-      "rme": 0.6905234919089283,
+      "hz": 54294475.79167783,
+      "rme": 1.445777959948455,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "info, small payload",
-      "hz": 1520855.0196078431,
-      "rme": 0.43745571053607,
+      "hz": 3659892.99879952,
+      "rme": 0.6704407358495906,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "debug below min level (filtered)",
-      "hz": 148186775.1244344,
-      "rme": 0.5565747876978914,
+      "hz": 144927841.79412314,
+      "rme": 2.2651498256395395,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "info, nested payload + 6 redact keys",
-      "hz": 425853.6449810693,
-      "rme": 0.6055694566157952,
+      "hz": 622818.9830573739,
+      "rme": 0.8447264397416044,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "info, context + 6 redact keys",
-      "hz": 834029.9697810161,
-      "rme": 1.662792992490917,
+      "hz": 2560360.9162434204,
+      "rme": 0.7048180218299959,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "error with Error instance",
-      "hz": 1282789.9402942604,
-      "rme": 0.7099948884668462,
+      "hz": 2406586.835263568,
+      "rme": 0.9615097543877719,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "info, wide payload (50 fields)",
-      "hz": 277796.7551020408,
-      "rme": 0.3439397391887265,
+      "hz": 222964.26230492193,
+      "rme": 0.6850974376402004,
       "samples": 20
     },
     {
       "group": "logger",
       "name": "info, wide payload (50 fields, fast-mode object)",
-      "hz": 932458.7755102043,
-      "rme": 0.4850173040313997,
+      "hz": 610101.2126696834,
+      "rme": 0.4755528954144777,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "control: no logger middleware",
-      "hz": 610296.2907310964,
-      "rme": 0.7985211805474598,
+      "hz": 604767.676424416,
+      "rme": 0.7501299812340947,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "silent, no logs",
-      "hz": 352421.4214974814,
-      "rme": 0.7767289222953644,
+      "hz": 464635.4441393393,
+      "rme": 0.7791238706878264,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "silent, 3 handler logs + redact",
-      "hz": 144215.83625787034,
-      "rme": 0.9910099465722605,
+      "hz": 219544.09928920688,
+      "rme": 1.6396689934386204,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "access log",
-      "hz": 247135.59320074,
-      "rme": 0.8042356989560037,
+      "hz": 240920.9086525452,
+      "rme": 1.0538268508266164,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "access log + 15 headers + cf + redact",
-      "hz": 80176.57142857142,
-      "rme": 6.131130170371179,
+      "hz": 91742.96178471389,
+      "rme": 1.7001113816122486,
       "samples": 20
     },
     {
       "group": "middleware",
       "name": "error mode, thrown error",
-      "hz": 134727.31206090207,
-      "rme": 1.3748795736954944,
+      "hz": 137894.52202580433,
+      "rme": 1.5945609237271503,
       "samples": 20
     }
   ]

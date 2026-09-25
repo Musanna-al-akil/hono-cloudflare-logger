@@ -69,10 +69,14 @@ const NESTED_PAYLOAD = {
   ],
 };
 
+// Built key by key, so V8 stores it in dictionary mode (slow properties).
 const WIDE_PAYLOAD: Record<string, unknown> = {};
 for (let index = 0; index < 50; index += 1) {
   WIDE_PAYLOAD[`field_${index}`] = index % 3 === 0 ? `value-${index}` : index;
 }
+
+// The same fields in a fast-mode object, like an object literal or JSON.parse result.
+const WIDE_FAST_PAYLOAD: Record<string, unknown> = { ...WIDE_PAYLOAD };
 
 const SAMPLE_ERROR = new Error("database connection refused");
 
@@ -157,6 +161,11 @@ function createLoggerScenarios(): Scenario[] {
       group: "logger",
       name: "info, wide payload (50 fields)",
       fn: () => infoLogger.info("wide event", WIDE_PAYLOAD),
+    },
+    {
+      group: "logger",
+      name: "info, wide payload (50 fields, fast-mode object)",
+      fn: () => infoLogger.info("wide event", WIDE_FAST_PAYLOAD),
     },
   ];
 }
