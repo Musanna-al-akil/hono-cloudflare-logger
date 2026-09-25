@@ -13,11 +13,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
-    "paths": {
-      "hono-cloudflare-logger": ["./src/index.ts"]
-    },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "tests", "examples", "bench"]
+  "include": ["src", "tests", "bench"]
 }

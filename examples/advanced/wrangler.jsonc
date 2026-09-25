@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hono-cloudflare-logger-advanced",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // AsyncLocalStorage for hono/context-storage, used by getLogger().
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    // Keep every invocation; lower this to sample at the platform level.
+    "head_sampling_rate": 1,
+  },
+  "vars": {
+    // Read per request by the level resolver; change it without a code deploy.
+    "LOG_LEVEL": "debug",
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"],
+  },
+}

@@ -1,19 +1,18 @@
 import { Hono } from "hono";
-import { logger, type LoggerVariables } from "hono-cloudflare-logger";
+import { logger } from "hono-cloudflare-logger";
 
-const app = new Hono<{ Variables: LoggerVariables }>();
+const app = new Hono();
 
 app.use(
   "*",
   logger({
     autoLogging: "access",
     includeCfProperties: ["colo", "country"],
-    redactKeys: ["authorization"],
   }),
 );
 
 app.get("/", (c) => {
-  c.get("logger").info("hello from minimal example");
+  c.var.logger.info("hello from minimal example");
   return c.json({ ok: true });
 });
 

@@ -4,13 +4,16 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && wrangler deploy --dry-run --outdir .wrangler/dry-run"
   },
   "dependencies": {
-    "hono": "^4.9.7",
+    "hono": "^4.13.9",
     "hono-cloudflare-logger": "file:../.."
   },
   "devDependencies": {
-    "wrangler": "^4.4.0"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.140.0"
   }
 }

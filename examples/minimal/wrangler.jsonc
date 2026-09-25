@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hono-cloudflare-logger-minimal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Workers Logs: indexes the fields of every logged object.
+  "observability": {
+    "enabled": true,
+  },
+}

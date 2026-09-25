@@ -65,6 +65,36 @@ jobs:
             tar -tf "$PACK_FILE" | grep -q "package/$file" || { echo "Missing $file"; exit 1; }
           done
 
+  examples:
+    name: Example (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [minimal, advanced]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build the package
+        run: |
+          npm ci
+          npm run build
+
+      # The example installs the built package as a copy (install-links) and
+      # bundles it with wrangler, exactly as a consumer would.
+      - name: Typecheck and bundle
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run check
+
   jsr:
     name: JSR dry run
     runs-on: ubuntu-latest
