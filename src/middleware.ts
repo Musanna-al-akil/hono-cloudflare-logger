@@ -14,6 +14,7 @@ import {
   flushBuffer,
   type Logger,
   type LoggerCore,
+  warningWithError,
 } from "./logger.ts";
 import { sanitize } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
@@ -220,6 +221,18 @@ function shouldSkip(skip: ((c: Context) => boolean) | undefined, c: Context): bo
   }
 }
 
+/**
+ * Duck-typed so it also recognizes an `HTTPException` from another installed
+ * copy of hono.
+ */
+function isHttpException(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { getResponse?: unknown }).getResponse === "function"
+  );
+}
+
 /** Writes the automatic entry for a finished request. */
 function writeAutoEntry(
   requestLogger: Logger,
@@ -243,7 +256,12 @@ function writeAutoEntry(
   }
 
   if (priority >= WARNING_LEVEL_PRIORITY) {
-    requestLogger.warning("Request completed", data, { placement: "flat" });
+    if (error !== undefined && !isHttpException(error)) {
+      // The app's onError turned a real error into a 4xx: keep the error.
+      warningWithError(requestLogger, "Request completed", error, data, { placement: "flat" });
+    } else {
+      requestLogger.warning("Request completed", data, { placement: "flat" });
+    }
   } else if (sampleRate >= 1 || Math.random() < sampleRate) {
     requestLogger.info("Request completed", data, { placement: "flat" });
   }

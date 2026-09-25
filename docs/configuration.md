@@ -101,7 +101,8 @@ Every entry is made safe to write whatever the options are:
 
 In `access` mode, 4xx responses (including `HTTPException` 4xx) are written as
 `warning "Request completed"`, and everything else as `info "Request
-completed"`. Automatic entries add top-level `status` and `duration_ms`.
+completed"`. When the app's `onError` turns another thrown error into a 4xx,
+the warning includes it as `err`. Automatic entries add top-level `status` and `duration_ms`.
 `duration_ms` measures wall time across I/O, because Workers only advance the
 clock between I/O operations.
 

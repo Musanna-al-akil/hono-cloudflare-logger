@@ -364,3 +364,31 @@ export function createLogger(options: LoggerOptions = {}): Logger {
 export function createLoggerFromCore<Input>(core: LoggerCore<Input>): Logger {
   return new Logger({ [CORE]: core as LoggerCore } as InternalInit as LoggerOptions);
 }
+
+type WriteMethod = (
+  priority: number,
+  msg: string,
+  data: LogData | undefined,
+  err: unknown,
+  options: LogWriteOptions | undefined,
+) => void;
+
+/**
+ * @internal Writes a warning with an error attached; `warning()` takes no
+ * error argument.
+ */
+export function warningWithError(
+  logger: Logger,
+  msg: string,
+  err: unknown,
+  data: LogData,
+  options: LogWriteOptions,
+): void {
+  (logger as unknown as { write: WriteMethod }).write(
+    WARNING_LEVEL_PRIORITY,
+    msg,
+    data,
+    err,
+    options,
+  );
+}

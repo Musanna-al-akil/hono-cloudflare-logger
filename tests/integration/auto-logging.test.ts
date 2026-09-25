@@ -70,6 +70,24 @@ describe("automatic request entries", () => {
       expect(serverError?.err).toMatchObject({ name: "TypeError", message: "boom" });
     });
 
+    it("keeps the error when onError maps it to a client status", async () => {
+      const app = new Hono();
+      app.use("*", logger({ autoLogging: "access" }));
+      app.onError((_error, c) => c.json({ error: "invalid" }, 400));
+      app.get("/", () => {
+        throw new TypeError("bad input");
+      });
+
+      await app.request("/");
+
+      expect(onlyEntry(spies)).toMatchObject({
+        level: "warning",
+        msg: "Request completed",
+        status: 400,
+        err: { name: "TypeError", message: "bad input" },
+      });
+    });
+
     it("samples successful info entries but keeps warnings and errors", async () => {
       const app = createApp({ autoLogging: "access", sampleRate: 0 });
 
