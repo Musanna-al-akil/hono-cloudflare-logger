@@ -152,7 +152,18 @@ function isReservedKey(key: string): boolean {
   }
 }
 
-function assignSafe(target: Record<string, unknown>, source: LogData): void {
+function isRecord(value: unknown): value is LogData {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Copies non-reserved keys. Sanitizing can turn an object into a string (e.g.
+ * `"[Unserializable]"`), which must not be spread into one key per character.
+ */
+function assignSafe(target: Record<string, unknown>, source: unknown): void {
+  if (!isRecord(source)) {
+    return;
+  }
   for (const key of Object.keys(source)) {
     if (!isReservedKey(key)) {
       target[key] = source[key];
@@ -313,7 +324,7 @@ export class Logger {
 
       if (data !== undefined) {
         const sanitized = sanitize(data, output.sanitize);
-        if (options?.placement === "flat") {
+        if (options?.placement === "flat" && isRecord(sanitized)) {
           assignSafe(entry, sanitized);
         } else {
           entry.data = sanitized;

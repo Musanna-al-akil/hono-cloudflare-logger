@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Logger } from "../../src/logger";
 import type { LogEntry, LogSinkInfo } from "../../src/types";
-import { loggedCalls, onlyEntry, spyOnConsole, type ConsoleSpies } from "../test-utils";
+import {
+  loggedCalls,
+  loggedEntries,
+  onlyEntry,
+  spyOnConsole,
+  type ConsoleSpies,
+} from "../test-utils";
 
 describe("Logger", () => {
   let spies: ConsoleSpies;
@@ -308,6 +314,29 @@ describe("Logger", () => {
     const entry = onlyEntry(spies);
     expect(entry.status).toBe(200);
     expect(entry).not.toHaveProperty("data");
+  });
+
+  it("nests flat data under data when it isn't an object after sanitizing", () => {
+    const logger = new Logger();
+    const unreadable = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("no keys");
+        },
+      },
+    );
+
+    logger.info("proxy", unreadable, { placement: "flat" });
+    logger.info("array", ["a", "b"] as never, { placement: "flat" });
+    logger.setContext(unreadable);
+    logger.info("context");
+
+    const [proxy, array, context] = loggedEntries(spies);
+    expect(proxy).toMatchObject({ msg: "proxy", data: "[Unserializable]" });
+    expect(proxy).not.toHaveProperty("0");
+    expect(array).toMatchObject({ msg: "array", data: ["a", "b"] });
+    expect(Object.keys(context ?? {})).toEqual(["level", "msg", "time"]);
   });
 
   it("does not allow context or flat data to override level/msg/time", () => {
