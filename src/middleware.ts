@@ -328,6 +328,15 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
           ? WARNING_LEVEL_PRIORITY
           : getLevelPriority("info");
 
+    // Settle the buffer first so the automatic entry is written, not buffered.
+    if (core.buffer !== undefined) {
+      if (priority >= ERROR_LEVEL_PRIORITY) {
+        flushBuffer(core);
+      } else {
+        discardBuffer(core);
+      }
+    }
+
     if (autoLogging !== "silent" && !shouldSkip(skip, c)) {
       writeAutoEntry(
         requestLogger,
@@ -338,14 +347,6 @@ export function logger<E extends Env = any>(config: LoggerConfig<E> = {}): Middl
         error,
         sampleRate,
       );
-    }
-
-    if (core.buffer !== undefined) {
-      if (priority >= ERROR_LEVEL_PRIORITY) {
-        flushBuffer(core);
-      } else {
-        discardBuffer(core);
-      }
     }
 
     if (responseHeader && !threw) {

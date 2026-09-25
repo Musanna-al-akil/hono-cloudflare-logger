@@ -211,6 +211,25 @@ describe("automatic request entries", () => {
       expect(loggedEntries(spies).map((entry) => entry.msg)).toEqual(["slow upstream"]);
     });
 
+    it("still writes the access entry for successful requests", async () => {
+      await createBufferedApp({ autoLogging: "access" }).request("/ok");
+
+      expect(loggedCalls(spies).map((call) => [call.method, call.entry.msg])).toEqual([
+        ["warn", "slow upstream"],
+        ["info", "Request completed"],
+      ]);
+    });
+
+    it("writes buffered entries before the access entry of a failed request", async () => {
+      await createBufferedApp({ autoLogging: "access" }).request("/fail");
+
+      expect(loggedEntries(spies).map((entry) => entry.msg)).toEqual([
+        "step 1",
+        "step 2",
+        "Request failed",
+      ]);
+    });
+
     it("writes buffered entries in order when the request fails", async () => {
       await createBufferedApp({ autoLogging: "error" }).request("/fail");
 
