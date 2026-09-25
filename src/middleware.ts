@@ -1,7 +1,9 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { DEFAULT_LEVEL, getLevelPriority } from "./levels.ts";
+import { resolveLevelPriority, resolveOutput, type ResolvedOutput } from "./config.ts";
+import { DEFAULT_LEVEL } from "./levels.ts";
 import { createLoggerFromCore, type BaseFields } from "./logger.ts";
-import { createKeyMatcher, redactDeep, type KeyMatcher } from "./redact.ts";
+import { sanitize } from "./sanitize.ts";
+import { reportWriteFailure } from "./sink.ts";
 import type { LoggerConfig, RequestMetadata } from "./types.ts";
 
 const DEFAULT_TRACE_HEADER = "X-Request-Id";
@@ -67,11 +69,7 @@ function pickRequestHeaders(
   return hasHeaders ? picked : undefined;
 }
 
-function buildBase(
-  resolved: ResolvedConfig,
-  c: Context,
-  matcher: KeyMatcher | undefined,
-): BaseFields {
+function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput): BaseFields {
   const base: BaseFields = {};
   const traceId = c.req.header(resolved.traceHeader) ?? c.req.header("cf-ray");
   if (traceId) {
@@ -92,38 +90,49 @@ function buildBase(
     req.cf = cf;
   }
 
-  base.req = redactDeep(req, matcher);
+  base.req = sanitize(req, output.sanitize);
   return base;
+}
+
+/** Runs `flush` after the response via `waitUntil`, or detached outside Workers. */
+function scheduleFlush(c: Context, flush: () => Promise<void>): void {
+  const pending = Promise.resolve()
+    .then(flush)
+    .catch((error: unknown) => reportWriteFailure(undefined, error));
+
+  try {
+    c.executionCtx.waitUntil(pending);
+  } catch {
+    // No ExecutionContext (tests, non-Workers runtimes): the promise still runs.
+  }
 }
 
 export function logger(config: LoggerConfig = {}): MiddlewareHandler {
   const {
-    level = DEFAULT_LEVEL,
     traceHeader = DEFAULT_TRACE_HEADER,
     autoLogging = DEFAULT_AUTO_LOGGING,
     includeCfProperties = [],
-    redactKeys = [],
     header = DEFAULT_INCLUDE_HEADERS,
   } = config;
 
-  const minPriority = getLevelPriority(level);
-  const matcher = createKeyMatcher(redactKeys);
+  const minPriority = resolveLevelPriority(config.level, DEFAULT_LEVEL);
+  const output = resolveOutput(config);
   const resolved: ResolvedConfig = {
     traceHeader,
     includeCfProperties: [...includeCfProperties],
     headers: typeof header === "boolean" ? header : header.map((name) => name.toLowerCase()),
   };
-  const buildRequestBase = (c: Context, keyMatcher: KeyMatcher | undefined): BaseFields =>
-    buildBase(resolved, c, keyMatcher);
+  const buildRequestBase = (c: Context, requestOutput: ResolvedOutput): BaseFields =>
+    buildBase(resolved, c, requestOutput);
 
-  if (autoLogging === "silent") {
+  if (autoLogging === "silent" && !output.flush) {
     // Nothing happens after the handler, so skip the timer and the extra async frame.
     return (c, next) => {
       c.set(
         "logger",
         createLoggerFromCore({
           minPriority,
-          matcher,
+          output,
           buildBase: buildRequestBase,
           baseInput: c,
           base: undefined,
@@ -139,7 +148,7 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
 
     const requestLogger = createLoggerFromCore({
       minPriority,
-      matcher,
+      output,
       buildBase: buildRequestBase,
       baseInput: c,
       base: undefined,
@@ -156,7 +165,9 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
     const durationMs = Date.now() - startTime;
     const status = c.res.status;
 
-    if (autoLogging === "access") {
+    if (autoLogging === "silent") {
+      // Only reached when a sink needs flushing.
+    } else if (autoLogging === "access") {
       requestLogger.info(
         "Request completed",
         {
@@ -188,6 +199,10 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
           { dataPlacement: "flat" },
         );
       }
+    }
+
+    if (output.flush) {
+      scheduleFlush(c, output.flush);
     }
 
     if (thrownError) {

@@ -1,29 +1,28 @@
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/middleware";
 import type { LoggerVariables } from "../../src/types";
-import { parseLoggedEntry, parseLoggedEntryFromCalls } from "../test-utils";
+import {
+  loggedCalls,
+  loggedEntries,
+  onlyEntry,
+  spyOnConsole,
+  type ConsoleSpies,
+} from "../test-utils";
 
 function createRequest(path: string, init?: RequestInit, cf?: Record<string, unknown>): Request {
   const req = new Request(`http://localhost${path}`, init);
   if (cf) {
-    (req as Request & { cf?: Record<string, unknown> }).cf = cf;
+    Object.defineProperty(req, "cf", { value: cf });
   }
   return req;
 }
 
 describe("logger middleware", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let spies: ConsoleSpies;
 
   beforeEach(() => {
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
+    spies = spyOnConsole();
   });
 
   it("uses trace header over cf-ray and includes selected cf properties", async () => {
@@ -53,14 +52,13 @@ describe("logger middleware", () => {
       ),
     );
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
+    const entry = onlyEntry(spies);
     const req = entry.req as Record<string, unknown>;
-    const cf = req.cf as Record<string, unknown>;
 
     expect(entry.trace_id).toBe("custom-trace");
     expect(req.method).toBe("GET");
     expect(req.url).toBe("/trace");
-    expect(cf).toEqual({ colo: "SJC", country: "US" });
+    expect(req.cf).toEqual({ colo: "SJC", country: "US" });
   });
 
   it("falls back to cf-ray when configured trace header is missing", async () => {
@@ -71,16 +69,9 @@ describe("logger middleware", () => {
       return c.text("ok");
     });
 
-    await app.request(
-      createRequest("/ray", {
-        headers: {
-          "cf-ray": "ray-123",
-        },
-      }),
-    );
+    await app.request(createRequest("/ray", { headers: { "cf-ray": "ray-123" } }));
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    expect(entry.trace_id).toBe("ray-123");
+    expect(onlyEntry(spies).trace_id).toBe("ray-123");
   });
 
   it("omits trace_id when no headers are available", async () => {
@@ -93,8 +84,37 @@ describe("logger middleware", () => {
 
     await app.request(createRequest("/no-trace"));
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    expect(entry).not.toHaveProperty("trace_id");
+    expect(onlyEntry(spies)).not.toHaveProperty("trace_id");
+  });
+
+  it("does not read request headers when nothing is logged", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ header: true, includeCfProperties: ["colo"] }));
+    app.get("/quiet", (c) => c.text("ok"));
+    const forEachSpy = vi.spyOn(Headers.prototype, "forEach");
+    const getSpy = vi.spyOn(Headers.prototype, "get");
+
+    await app.request(createRequest("/quiet"));
+
+    expect(forEachSpy).not.toHaveBeenCalled();
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(loggedCalls(spies)).toHaveLength(0);
+  });
+
+  it("builds request metadata once per request", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ header: true }));
+    app.get("/twice", (c) => {
+      c.get("logger").info("one");
+      c.get("logger").info("two");
+      return c.text("ok");
+    });
+    const forEachSpy = vi.spyOn(Headers.prototype, "forEach");
+
+    await app.request(createRequest("/twice", { headers: { "x-a": "1" } }));
+
+    expect(forEachSpy).toHaveBeenCalledTimes(1);
+    expect(loggedEntries(spies)).toHaveLength(2);
   });
 
   it("omits request headers by default", async () => {
@@ -105,18 +125,9 @@ describe("logger middleware", () => {
       return c.text("ok");
     });
 
-    await app.request(
-      createRequest("/headers-default", {
-        headers: {
-          "x-test-header": "enabled",
-        },
-      }),
-    );
+    await app.request(createRequest("/headers-default", { headers: { "x-test-header": "on" } }));
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const req = entry.req as Record<string, unknown>;
-
-    expect(req).not.toHaveProperty("headers");
+    expect(onlyEntry(spies).req).not.toHaveProperty("headers");
   });
 
   it("includes request headers when header option is true", async () => {
@@ -128,40 +139,11 @@ describe("logger middleware", () => {
     });
 
     await app.request(
-      createRequest("/headers-enabled", {
-        headers: {
-          "x-test-header": "enabled",
-        },
-      }),
+      createRequest("/headers-enabled", { headers: { "x-test-header": "enabled" } }),
     );
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const req = entry.req as Record<string, unknown>;
-    const headers = req.headers as Record<string, unknown>;
-
-    expect(headers["x-test-header"]).toBe("enabled");
-  });
-
-  it("omits request headers when header option is false", async () => {
-    const app = new Hono<{ Variables: LoggerVariables }>();
-    app.use("*", logger({ header: false }));
-    app.get("/headers-disabled", (c) => {
-      c.get("logger").info("headers disabled");
-      return c.text("ok");
-    });
-
-    await app.request(
-      createRequest("/headers-disabled", {
-        headers: {
-          "x-test-header": "disabled",
-        },
-      }),
-    );
-
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const req = entry.req as Record<string, unknown>;
-
-    expect(req).not.toHaveProperty("headers");
+    const req = onlyEntry(spies).req as Record<string, Record<string, unknown>>;
+    expect(req.headers?.["x-test-header"]).toBe("enabled");
   });
 
   it("redacts configured header keys when header logging is enabled", async () => {
@@ -173,23 +155,16 @@ describe("logger middleware", () => {
     });
 
     await app.request(
-      createRequest("/headers-redact", {
-        headers: {
-          authorization: "Bearer secret",
-        },
-      }),
+      createRequest("/headers-redact", { headers: { authorization: "Bearer secret" } }),
     );
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const req = entry.req as Record<string, unknown>;
-    const headers = req.headers as Record<string, unknown>;
-
-    expect(headers.authorization).toBe("[REDACTED]");
+    const req = onlyEntry(spies).req as Record<string, Record<string, unknown>>;
+    expect(req.headers?.authorization).toBe("[REDACTED]");
   });
 
   it("includes only allowlisted request headers", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
-    app.use("*", logger({ header: ["x-request-id", "authorization"] }));
+    app.use("*", logger({ header: ["X-Request-Id", "accept"] }));
     app.get("/headers-allowlist", (c) => {
       c.get("logger").info("headers allowlist");
       return c.text("ok");
@@ -197,22 +172,12 @@ describe("logger middleware", () => {
 
     await app.request(
       createRequest("/headers-allowlist", {
-        headers: {
-          "x-request-id": "trace-1",
-          authorization: "Bearer secret",
-          "x-ignored": "ignored",
-        },
+        headers: { "x-request-id": "trace-1", accept: "text/plain", "x-ignored": "ignored" },
       }),
     );
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const req = entry.req as Record<string, unknown>;
-    const headers = req.headers as Record<string, unknown>;
-
-    expect(headers).toEqual({
-      "x-request-id": "trace-1",
-      authorization: "Bearer secret",
-    });
+    const req = onlyEntry(spies).req as Record<string, unknown>;
+    expect(req.headers).toEqual({ "x-request-id": "trace-1", accept: "text/plain" });
   });
 
   it("emits a response-end access log with status and duration", async () => {
@@ -223,9 +188,7 @@ describe("logger middleware", () => {
     const response = await app.request(createRequest("/created"));
     expect(response.status).toBe(201);
 
-    expect(console.log).toHaveBeenCalledTimes(1);
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-
+    const entry = onlyEntry(spies);
     expect(entry.msg).toBe("Request completed");
     expect(entry.level).toBe("info");
     expect(entry.status).toBe(201);
@@ -244,31 +207,11 @@ describe("logger middleware", () => {
     const response = await app.request(createRequest("/boom"));
     expect(response.status).toBe(500);
 
-    const errorEntries = errorSpy.mock.calls
-      .map((call: unknown[]) => {
-        try {
-          return parseLoggedEntry(call[0]);
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((entry: Record<string, unknown> | undefined): entry is Record<string, unknown> =>
-        Boolean(entry),
-      );
-
-    const entry = errorEntries.find(
-      (item: Record<string, unknown>) => item.msg === "Unhandled error",
-    );
+    const entry = loggedEntries(spies).find((item) => item.msg === "Unhandled error");
     expect(entry).toBeDefined();
-    if (!entry) {
-      throw new Error("Unhandled error log entry not found");
-    }
-    const err = entry.err as Record<string, unknown>;
-
-    expect(entry.msg).toBe("Unhandled error");
-    expect(entry.level).toBe("error");
-    expect(err.message).toBe("boom");
-    expect(typeof entry.duration_ms).toBe("number");
+    expect(entry?.level).toBe("error");
+    expect(entry?.err).toMatchObject({ message: "boom" });
+    expect(typeof entry?.duration_ms).toBe("number");
   });
 
   it("auto-logs 5xx responses in error mode", async () => {
@@ -279,14 +222,43 @@ describe("logger middleware", () => {
     const response = await app.request(createRequest("/503"));
     expect(response.status).toBe(503);
 
-    const entry = parseLoggedEntryFromCalls(errorSpy.mock.calls);
+    const calls = loggedCalls(spies);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("error");
+    expect(calls[0]?.entry).toMatchObject({ msg: "Request failed", level: "error", status: 503 });
+  });
 
-    expect(entry.msg).toBe("Request failed");
-    expect(entry.level).toBe("error");
-    expect(entry.status).toBe(503);
-    expect(typeof entry.duration_ms).toBe("number");
-    expect(entry).not.toHaveProperty("trace");
-    expect(Object.keys(entry).slice(0, 3)).toEqual(["level", "msg", "time"]);
+  it("flushes a sink after each request", async () => {
+    const flush = vi.fn(async () => {});
+    const written: string[] = [];
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ sink: { write: (entry) => written.push(entry.msg), flush } }));
+    app.get("/sink", (c) => {
+      c.get("logger").info("to sink");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/sink"));
+    await Promise.resolve();
+
+    expect(written).toEqual(["to sink"]);
+    expect(flush).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the flush promise to executionCtx.waitUntil when available", async () => {
+    const waitUntil = vi.fn();
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ sink: { write: () => {}, flush: async () => {} } }));
+    app.get("/ctx", (c) => c.text("ok"));
+
+    await app.fetch(createRequest("/ctx"), {}, {
+      waitUntil,
+      passThroughOnException: () => {},
+      props: {},
+    } as never);
+
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    expect(waitUntil.mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
   it("nests route-level payload under trace", async () => {
@@ -299,12 +271,8 @@ describe("logger middleware", () => {
 
     await app.request(createRequest("/custom-payload"));
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const trace = entry.trace as Record<string, unknown>;
-
-    expect(trace.name).toBe("John Doe");
-    expect(trace.age).toBe(30);
+    const entry = onlyEntry(spies);
+    expect(entry.trace).toEqual({ name: "John Doe", age: 30 });
     expect(entry).not.toHaveProperty("name");
-    expect(entry).not.toHaveProperty("age");
   });
 });

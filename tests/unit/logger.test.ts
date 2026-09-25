@@ -1,19 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Logger } from "../../src/logger";
-import { parseLoggedEntryFromCalls } from "../test-utils";
+import type { LogEntry, LogSinkInfo } from "../../src/types";
+import { loggedCalls, onlyEntry, spyOnConsole, type ConsoleSpies } from "../test-utils";
 
 describe("Logger", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let spies: ConsoleSpies;
 
   beforeEach(() => {
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
+    spies = spyOnConsole();
   });
 
   it("filters by minimum level", () => {
@@ -23,24 +17,107 @@ describe("Logger", () => {
     logger.warning("written");
     logger.error("written-error");
 
-    expect(console.log).toHaveBeenCalledTimes(1);
-    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(loggedCalls(spies).map((call) => call.entry.msg)).toEqual(["written", "written-error"]);
   });
 
-  it("routes lower levels to console.log and error+ to console.error", () => {
+  it("maps levels to the console method Workers Logs uses as the event level", () => {
     const logger = new Logger({ level: "debug" });
 
-    logger.info("info");
-    logger.critical("critical");
+    logger.debug("d");
+    logger.info("i");
+    logger.notice("n");
+    logger.warning("w");
+    logger.error("e");
+    logger.critical("c");
+    logger.alert("a");
+    logger.emergency("em");
 
-    expect(console.log).toHaveBeenCalledTimes(1);
-    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(loggedCalls(spies).map((call) => [call.entry.level, call.method])).toEqual([
+      ["debug", "debug"],
+      ["info", "info"],
+      ["notice", "info"],
+      ["warning", "warn"],
+      ["error", "error"],
+      ["critical", "error"],
+      ["alert", "error"],
+      ["emergency", "error"],
+    ]);
+    expect(spies.log).not.toHaveBeenCalled();
+  });
 
-    const infoLog = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const criticalLog = parseLoggedEntryFromCalls(errorSpy.mock.calls);
+  it("passes a plain object to the console by default", () => {
+    const logger = new Logger();
 
-    expect(infoLog.level).toBe("info");
-    expect(criticalLog.level).toBe("critical");
+    logger.info("object mode", { userId: "u-1" });
+
+    const raw = spies.info.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(typeof raw).toBe("object");
+    expect(raw.msg).toBe("object mode");
+  });
+
+  it("writes one JSON string per entry with format json", () => {
+    const logger = new Logger({ format: "json" });
+
+    logger.info("json mode", { userId: "u-1" });
+
+    const raw = spies.info.mock.calls[0]?.[0];
+    expect(typeof raw).toBe("string");
+    expect(String(raw).endsWith("\n")).toBe(false);
+    expect(JSON.parse(String(raw))).toMatchObject({ level: "info", msg: "json mode" });
+  });
+
+  it("writes a single escaped line with format pretty", () => {
+    const logger = new Logger({ format: "pretty", timestamp: false });
+
+    logger.warning("line\nbreak", { userId: "u-1" });
+
+    const raw = String(spies.warn.mock.calls[0]?.[0]);
+    expect(raw).toBe('WARNING   line\\u000abreak trace={"userId":"u-1"}');
+  });
+
+  it("omits time when timestamp is disabled", () => {
+    const logger = new Logger({ timestamp: false });
+
+    logger.info("no time");
+
+    expect(onlyEntry(spies)).not.toHaveProperty("time");
+  });
+
+  it("sends entries to a custom sink instead of the console", () => {
+    const received: Array<[LogEntry, LogSinkInfo]> = [];
+    const logger = new Logger({ sink: (entry, info) => received.push([entry, info]) });
+
+    logger.warning("to sink", { a: 1 });
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.[0]).toMatchObject({ level: "warning", msg: "to sink" });
+    expect(received[0]?.[1]).toEqual({ level: "warning", priority: 3 });
+    expect(loggedCalls(spies)).toHaveLength(0);
+  });
+
+  it("never throws when the sink throws", () => {
+    const logger = new Logger({
+      sink: () => {
+        throw new Error("sink down");
+      },
+    });
+
+    expect(() => logger.info("lost")).not.toThrow();
+
+    const fallback = onlyEntry(spies);
+    expect(fallback).toMatchObject({
+      level: "error",
+      msg: "Logger failed to write entry",
+      original_level: "info",
+      original_msg: "lost",
+      reason: "sink down",
+    });
+  });
+
+  it("rejects unknown levels and formats at construction", () => {
+    expect(() => new Logger({ level: "verbose" as never })).toThrow(TypeError);
+    expect(() => new Logger({ format: "xml" as never })).toThrow(TypeError);
+    expect(() => new Logger({ maxStringLength: 0 })).toThrow(TypeError);
   });
 
   it("merges mutable context with last write wins and nests call data under trace", () => {
@@ -50,14 +127,13 @@ describe("Logger", () => {
     logger.setContext({ role: "admin", sessionId: "s-1" });
     logger.info("context merge", { route: "/login" });
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const trace = entry.trace as Record<string, unknown>;
+    const entry = onlyEntry(spies);
     expect(entry.trace_id).toBe("trace-1");
     expect(entry.userId).toBe("u-1");
     expect(entry.role).toBe("admin");
     expect(entry.sessionId).toBe("s-1");
     expect(entry).not.toHaveProperty("route");
-    expect(trace.route).toBe("/login");
+    expect(entry.trace).toEqual({ route: "/login" });
   });
 
   it("redacts configured keys deeply and case-insensitively", () => {
@@ -69,49 +145,127 @@ describe("Logger", () => {
       arr: [{ Password: "case-insensitive" }],
     });
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const trace = entry.trace as Record<string, unknown>;
-    const nested = trace.nested as Record<string, unknown>;
-    const arr = trace.arr as Array<Record<string, unknown>>;
-
-    expect(trace.password).toBe("[REDACTED]");
-    expect(nested.token).toBe("[REDACTED]");
-    expect(nested.keep).toBe(true);
-    expect(arr[0]?.Password).toBe("[REDACTED]");
-  });
-
-  it("falls back to static error for circular payloads while redacting", () => {
-    const logger = new Logger({ level: "debug", redactKeys: ["token"] });
-    const circular: Record<string, unknown> = { token: "secret" };
-    circular.self = circular;
-
-    logger.info("circular-redact", circular);
-
-    expect(console.log).toHaveBeenCalledTimes(0);
-    expect(console.error).toHaveBeenCalledTimes(1);
-
-    const entry = parseLoggedEntryFromCalls(errorSpy.mock.calls);
-    expect(entry).toEqual({
-      level: "error",
-      msg: "Logger failed to serialize object",
+    expect(onlyEntry(spies).trace).toEqual({
+      password: "[REDACTED]",
+      nested: { token: "[REDACTED]", keep: true },
+      arr: [{ Password: "[REDACTED]" }],
     });
   });
 
-  it("serializes Error with only message and stack", () => {
+  it("uses a custom censor", () => {
+    const logger = new Logger({ redactKeys: ["password"], censor: "***" });
+
+    logger.info("censor", { password: "plain" });
+
+    expect(onlyEntry(spies).trace).toEqual({ password: "***" });
+  });
+
+  it("does not mutate the caller's objects when redacting", () => {
+    const logger = new Logger({ redactKeys: ["token"] });
+    const payload = { token: "secret", nested: { token: "inner" } };
+
+    logger.info("immutable", payload);
+
+    expect(payload).toEqual({ token: "secret", nested: { token: "inner" } });
+  });
+
+  it("replaces circular references instead of dropping the entry", () => {
+    const logger = new Logger({ level: "debug", redactKeys: ["token"] });
+    const circular: Record<string, unknown> = { token: "secret", keep: 1 };
+    circular.self = circular;
+
+    logger.info("circular", circular);
+
+    expect(onlyEntry(spies).trace).toEqual({
+      token: "[REDACTED]",
+      keep: 1,
+      self: "[Circular]",
+    });
+  });
+
+  it("keeps shared (non-circular) references", () => {
+    const logger = new Logger();
+    const shared = { id: 1 };
+
+    logger.info("shared", { a: shared, b: shared });
+
+    expect(onlyEntry(spies).trace).toEqual({ a: { id: 1 }, b: { id: 1 } });
+  });
+
+  it("converts values JSON cannot represent", () => {
+    const logger = new Logger();
+
+    logger.info("values", {
+      big: 10n,
+      fn: () => 1,
+      map: new Map<unknown, unknown>([
+        ["a", 1],
+        [2, "b"],
+      ]),
+      set: new Set([1, 2]),
+      bytes: new Uint8Array(4),
+      headers: new Headers({ "x-a": "1" }),
+      date: new Date("2026-01-01T00:00:00.000Z"),
+      url: new URL("https://example.com/path"),
+    });
+
+    expect(onlyEntry(spies).trace).toEqual({
+      big: "10",
+      map: { a: 1, "2": "b" },
+      set: [1, 2],
+      bytes: "[Uint8Array(4)]",
+      headers: { "x-a": "1" },
+      date: "2026-01-01T00:00:00.000Z",
+      url: "https://example.com/path",
+    });
+  });
+
+  it("caps nesting depth", () => {
+    const logger = new Logger();
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let index = 0; index < 12; index += 1) {
+      deep = { next: deep };
+    }
+
+    logger.info("deep", deep);
+
+    const serialized = JSON.stringify(onlyEntry(spies).trace);
+    expect(serialized).toContain('"[Object]"');
+    expect(serialized).not.toContain("leaf");
+  });
+
+  it("truncates oversized strings", () => {
+    const logger = new Logger({ maxStringLength: 10 });
+
+    logger.info("long", { body: "x".repeat(25) });
+
+    expect(onlyEntry(spies).trace).toEqual({ body: `${"x".repeat(10)}…[truncated 15 chars]` });
+  });
+
+  it("survives a throwing toJSON", () => {
+    const logger = new Logger();
+    const hostile = {
+      toJSON() {
+        throw new Error("nope");
+      },
+    };
+
+    logger.info("hostile", { hostile });
+
+    expect(onlyEntry(spies).trace).toEqual({ hostile: "[Unserializable]" });
+  });
+
+  it("serializes Error with message and stack", () => {
     const logger = new Logger({ level: "debug" });
     const err = new Error("boom");
-    (err as Error & { code?: string }).code = "E_BANG";
 
     logger.error("failed", err, { op: "create" });
 
-    const entry = parseLoggedEntryFromCalls(errorSpy.mock.calls);
+    const entry = onlyEntry(spies);
     const errorPart = entry.err as Record<string, unknown>;
-    const trace = entry.trace as Record<string, unknown>;
-
     expect(errorPart.message).toBe("boom");
     expect(typeof errorPart.stack).toBe("string");
-    expect(errorPart).not.toHaveProperty("code");
-    expect(trace.op).toBe("create");
+    expect(entry.trace).toEqual({ op: "create" });
   });
 
   it("supports explicit flat placement override", () => {
@@ -119,7 +273,7 @@ describe("Logger", () => {
 
     logger.info("flat data", { status: 200 }, { dataPlacement: "flat" });
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
+    const entry = onlyEntry(spies);
     expect(entry.status).toBe(200);
     expect(entry).not.toHaveProperty("trace");
   });
@@ -134,41 +288,16 @@ describe("Logger", () => {
 
     logger.info(
       "canonical",
-      {
-        level: "critical",
-        msg: "flat-msg",
-        time: "flat-time",
-        status: 200,
-      },
+      { level: "critical", msg: "flat-msg", time: "flat-time", status: 200 },
       { dataPlacement: "flat" },
     );
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
+    const entry = onlyEntry(spies);
     expect(entry.level).toBe("info");
     expect(entry.msg).toBe("canonical");
-    expect(typeof entry.time).toBe("string");
     expect(entry.time).not.toBe("context-time");
     expect(entry.time).not.toBe("flat-time");
     expect(entry.status).toBe(200);
-  });
-
-  it("preserves non-plain objects while redacting configured keys", () => {
-    const logger = new Logger({ level: "debug", redactKeys: ["password"] });
-    const createdAt = new Date("2026-01-01T00:00:00.000Z");
-    const url = new URL("https://example.com/path");
-
-    logger.info("keep object types", {
-      createdAt,
-      url,
-      password: "secret",
-    });
-
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const trace = entry.trace as Record<string, unknown>;
-
-    expect(trace.createdAt).toBe(createdAt.toISOString());
-    expect(trace.url).toBe(url.href);
-    expect(trace.password).toBe("[REDACTED]");
   });
 
   it("serializes keys with level,msg,trace,time prefix when trace exists", () => {
@@ -177,52 +306,28 @@ describe("Logger", () => {
 
     logger.info("ordered trace", { route: "/login" });
 
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const keys = Object.keys(entry);
-
+    const keys = Object.keys(onlyEntry(spies));
     expect(keys.slice(0, 4)).toEqual(["level", "msg", "trace", "time"]);
     expect(keys.indexOf("trace_id")).toBeGreaterThan(3);
     expect(keys.indexOf("userId")).toBeGreaterThan(3);
   });
 
-  it("serializes keys with level,msg,time prefix when trace is absent", () => {
-    const logger = new Logger({ level: "debug", traceId: "trace-1" });
-
-    logger.info("ordered no trace");
-
-    const entry = parseLoggedEntryFromCalls(logSpy.mock.calls);
-    const keys = Object.keys(entry);
-
-    expect(keys.slice(0, 3)).toEqual(["level", "msg", "time"]);
-    expect(keys.indexOf("trace_id")).toBeGreaterThan(2);
-  });
-
-  it("falls back to static error when serialization fails for circular objects", () => {
-    const logger = new Logger({ level: "debug" });
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-
-    logger.info("will-fail", circular);
-
-    expect(console.log).toHaveBeenCalledTimes(0);
-    expect(console.error).toHaveBeenCalledTimes(1);
-
-    const entry = parseLoggedEntryFromCalls(errorSpy.mock.calls);
-    expect(entry).toEqual({
-      level: "error",
-      msg: "Logger failed to serialize object",
+  it("reports but does not throw when writing fails unexpectedly", () => {
+    const logger = new Logger();
+    spies.info.mockImplementation(() => {
+      throw new Error("console broke");
     });
+
+    expect(() => logger.info("will fail")).not.toThrow();
+    expect(spies.error).toHaveBeenCalledTimes(1);
   });
 
-  it("writes newline-terminated NDJSON lines", () => {
-    const logger = new Logger({ level: "debug" });
+  it("does not call Date for filtered entries", () => {
+    const logger = new Logger({ level: "error" });
+    const dateSpy = vi.spyOn(Date, "now");
 
-    logger.notice("ndjson");
+    logger.info("filtered");
 
-    const rawCall = logSpy.mock.calls[0];
-    expect(rawCall).toBeDefined();
-    const raw = rawCall?.[0];
-    expect(String(raw).endsWith("\n")).toBe(true);
-    expect(() => JSON.parse(String(raw).trimEnd())).not.toThrow();
+    expect(dateSpy).not.toHaveBeenCalled();
   });
 });

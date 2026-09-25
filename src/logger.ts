@@ -1,6 +1,13 @@
-import { DEFAULT_LEVEL, getLevelPriority } from "./levels.ts";
-import { createKeyMatcher, redactDeep, type KeyMatcher } from "./redact.ts";
-import { writeLogEntry } from "./serialize.ts";
+import {
+  resolveLevelPriority,
+  resolveOutput,
+  type OutputOptions,
+  type ResolvedOutput,
+} from "./config.ts";
+import { DEFAULT_LEVEL } from "./levels.ts";
+import { sanitize } from "./sanitize.ts";
+import { reportWriteFailure } from "./sink.ts";
+import { isoTimestamp } from "./time.ts";
 import type { LogContext, LogEntry, RequestMetadata, SyslogLevel } from "./types.ts";
 
 export type DataPlacement = "trace" | "flat";
@@ -9,13 +16,14 @@ export interface LogWriteOptions {
   dataPlacement?: DataPlacement;
 }
 
-export interface LoggerOptions {
+export interface LoggerOptions extends OutputOptions {
+  /** Minimum log level to emit. Default: `info`. */
   level?: SyslogLevel;
+  /** Correlation id added to every entry as `trace_id`. */
   traceId?: string;
-  redactKeys?: readonly string[];
 }
 
-/** Request-scoped fields shared by every entry. Built once and already redacted. */
+/** Request-scoped fields shared by every entry. Built once and already sanitized. */
 export interface BaseFields {
   trace_id?: string;
   req?: RequestMetadata;
@@ -30,8 +38,8 @@ export interface BaseFields {
  */
 export interface LoggerCore<Input = unknown> {
   readonly minPriority: number;
-  readonly matcher: KeyMatcher | undefined;
-  readonly buildBase: ((input: Input, matcher: KeyMatcher | undefined) => BaseFields) | undefined;
+  readonly output: ResolvedOutput;
+  readonly buildBase: ((input: Input, output: ResolvedOutput) => BaseFields) | undefined;
   readonly baseInput: Input;
   base: BaseFields | undefined;
 }
@@ -57,7 +65,7 @@ function assignSafe(target: Record<string, unknown>, source: Record<string, unkn
 }
 
 function resolveBase(core: LoggerCore): BaseFields {
-  const base = core.buildBase ? core.buildBase(core.baseInput, core.matcher) : {};
+  const base = core.buildBase ? core.buildBase(core.baseInput, core.output) : {};
   core.base = base;
   return base;
 }
@@ -77,8 +85,8 @@ export class Logger {
       }
 
       this.core = {
-        minPriority: getLevelPriority(options.level ?? DEFAULT_LEVEL),
-        matcher: createKeyMatcher(options.redactKeys ?? []),
+        minPriority: resolveLevelPriority(options.level, DEFAULT_LEVEL),
+        output: resolveOutput(options),
         buildBase: undefined,
         baseInput: undefined,
         base,
@@ -89,9 +97,9 @@ export class Logger {
   }
 
   setContext(context: LogContext): void {
-    const redacted = redactDeep(context, this.core.matcher);
+    const sanitized = sanitize(context, this.core.output.sanitize);
     this.context ??= {};
-    assignSafe(this.context, redacted);
+    assignSafe(this.context, sanitized);
   }
 
   debug(msg: string, data?: LogContext, options?: LogWriteOptions): void {
@@ -139,41 +147,46 @@ export class Logger {
       return;
     }
 
-    const entry: LogEntry = {
-      level,
-      msg,
-    };
-    if (data && dataPlacement === "trace") {
-      entry.trace = redactDeep(data, core.matcher);
-    }
-    entry.time = new Date().toISOString();
-
-    const base = core.base ?? resolveBase(core);
-    if (base.trace_id) {
-      entry.trace_id = base.trace_id;
-    }
-    if (base.req) {
-      entry.req = base.req;
-    }
-
-    if (this.context) {
-      assignSafe(entry, this.context);
-    }
-
-    if (data && dataPlacement === "flat") {
-      assignSafe(entry, redactDeep(data, core.matcher));
-    }
-
-    if (err instanceof Error) {
-      const errEntry: LogEntry["err"] = { message: err.message };
-      if (err.stack) {
-        errEntry.stack = err.stack;
+    let entry: LogEntry | undefined;
+    try {
+      const output = core.output;
+      entry = { level, msg };
+      if (data && dataPlacement === "trace") {
+        entry.trace = sanitize(data, output.sanitize);
+      }
+      if (output.timestamp) {
+        entry.time = isoTimestamp();
       }
 
-      entry.err = errEntry;
-    }
+      const base = core.base ?? resolveBase(core);
+      if (base.trace_id) {
+        entry.trace_id = base.trace_id;
+      }
+      if (base.req) {
+        entry.req = base.req;
+      }
 
-    writeLogEntry(entry, levelPriority);
+      if (this.context) {
+        assignSafe(entry, this.context);
+      }
+
+      if (data && dataPlacement === "flat") {
+        assignSafe(entry, sanitize(data, output.sanitize));
+      }
+
+      if (err instanceof Error) {
+        const errEntry: LogEntry["err"] = { message: err.message };
+        if (err.stack) {
+          errEntry.stack = err.stack;
+        }
+
+        entry.err = errEntry;
+      }
+
+      output.write(entry, levelPriority);
+    } catch (error) {
+      reportWriteFailure(entry, error);
+    }
   }
 }
 
