@@ -53,4 +53,4 @@ jobs:
       - name: Publish to JSR
         env:
           JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
-        run: npx jsr publish
+        run: npx jsr publish --token "$JSR_TOKEN"
