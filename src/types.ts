@@ -22,28 +22,81 @@ export type AutoLoggingMode = "silent" | "access" | "error";
  */
 export type LogFormat = "object" | "json" | "pretty";
 
-export type LogContext = Record<string, any>;
+/** Structured fields attached to an entry or to the logger context. */
+export type LogData = Record<string, unknown>;
+
+/** @deprecated Use {@link LogData}. */
+export type LogContext = LogData;
+
+/** Where per-call data goes: nested under `data` (default) or merged into the entry. */
+export type DataPlacement = "nested" | "flat";
+
+export interface LogWriteOptions {
+  placement?: DataPlacement;
+}
+
+/**
+ * Commonly logged keys of Cloudflare's `request.cf` object
+ * (`IncomingRequestCfProperties`). Any other key is accepted too.
+ */
+export type CfPropertyKey =
+  | "asn"
+  | "asOrganization"
+  | "botManagement"
+  | "city"
+  | "clientAcceptEncoding"
+  | "clientTcpRtt"
+  | "colo"
+  | "continent"
+  | "country"
+  | "httpProtocol"
+  | "isEUCountry"
+  | "latitude"
+  | "longitude"
+  | "metroCode"
+  | "postalCode"
+  | "region"
+  | "regionCode"
+  | "requestPriority"
+  | "timezone"
+  | "tlsCipher"
+  | "tlsVersion"
+  | "verifiedBotCategory"
+  | (string & {});
 
 export interface RequestMetadata {
   method: string;
-  url: string;
+  /** Request path, e.g. `/users/42`. */
+  path: string;
+  /** Matched route pattern, e.g. `/users/:id`. Low-cardinality, good for grouping. */
+  route?: string;
+  query?: Record<string, string>;
   headers?: Record<string, string>;
   cf?: Record<string, unknown>;
 }
 
-export interface ErrorMetadata {
+export interface SerializedError {
+  name: string;
   message: string;
   stack?: string;
+  code?: string | number;
+  status?: number;
+  cause?: unknown;
+  errors?: SerializedError[];
 }
 
-export interface LogEntry extends Record<string, any> {
+/** @deprecated Use {@link SerializedError}. */
+export type ErrorMetadata = SerializedError;
+
+export interface LogEntry {
   level: SyslogLevel;
+  msg: string;
   time?: string;
   trace_id?: string;
-  msg: string;
-  trace?: LogContext;
+  data?: LogData;
+  err?: SerializedError;
   req?: RequestMetadata;
-  err?: ErrorMetadata;
+  [key: string]: unknown;
 }
 
 export interface LogSinkInfo {
@@ -77,16 +130,21 @@ export interface LoggerConfig {
   traceHeader?: string;
   /** Automatic request logging mode. Default: `silent`. */
   autoLogging?: AutoLoggingMode;
-  /** Cloudflare `c.req.raw.cf` keys to include under `req.cf`. Default: `[]`. */
-  includeCfProperties?: readonly string[];
-  /** Keys to redact recursively and case-insensitively. Default: `[]`. */
+  /** Cloudflare `request.cf` keys to include under `req.cf`. Default: `[]`. */
+  includeCfProperties?: readonly CfPropertyKey[];
+  /**
+   * Include request headers under `req.headers`: `true` for all, or an
+   * allowlist. Credential headers are always censored. Default: `false`.
+   */
+  header?: boolean | readonly string[];
+  /** Include query parameters under `req.query` (redacted like any data). Default: `false`. */
+  query?: boolean;
+  /** Keys to redact recursively; matching ignores case and `-`, `_`, `.` separators. Default: `[]`. */
   redactKeys?: readonly string[];
   /** Replacement for redacted values. Default: `[REDACTED]`. */
   censor?: string;
   /** Longer strings are truncated to keep entries under the Workers Logs size limit. Default: `8192`. */
   maxStringLength?: number;
-  /** Include request headers under `req.headers`. Default: `false`. */
-  header?: boolean | readonly string[];
 }
 
 export interface LoggerVariables {

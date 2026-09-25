@@ -4,17 +4,11 @@ import {
   type OutputOptions,
   type ResolvedOutput,
 } from "./config.ts";
-import { DEFAULT_LEVEL } from "./levels.ts";
-import { sanitize } from "./sanitize.ts";
+import { DEFAULT_LEVEL, SYSLOG_LEVELS } from "./levels.ts";
+import { sanitize, serializeErrorValue } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { isoTimestamp } from "./time.ts";
-import type { LogContext, LogEntry, RequestMetadata, SyslogLevel } from "./types.ts";
-
-export type DataPlacement = "trace" | "flat";
-
-export interface LogWriteOptions {
-  dataPlacement?: DataPlacement;
-}
+import type { LogData, LogEntry, LogWriteOptions, RequestMetadata, SyslogLevel } from "./types.ts";
 
 export interface LoggerOptions extends OutputOptions {
   /** Minimum log level to emit. Default: `info`. */
@@ -23,7 +17,7 @@ export interface LoggerOptions extends OutputOptions {
   traceId?: string;
 }
 
-/** Request-scoped fields shared by every entry. Built once and already sanitized. */
+/** Request-scoped fields shared by every entry. Built lazily and already sanitized. */
 export interface BaseFields {
   trace_id?: string;
   req?: RequestMetadata;
@@ -32,7 +26,9 @@ export interface BaseFields {
 /**
  * State shared by a logger and its children for one request (or one
  * standalone logger). Base fields are produced lazily by `buildBase` on the
- * first emitted entry, so requests that never log pay almost nothing.
+ * first emitted entry, so requests that never log pay almost nothing. When
+ * `baseVersion` changes (e.g. Hono moved on to the route handler), the base
+ * is rebuilt so fields such as `req.route` stay accurate.
  *
  * @internal
  */
@@ -40,8 +36,10 @@ export interface LoggerCore<Input = unknown> {
   readonly minPriority: number;
   readonly output: ResolvedOutput;
   readonly buildBase: ((input: Input, output: ResolvedOutput) => BaseFields) | undefined;
+  readonly baseVersion: ((input: Input) => number) | undefined;
   readonly baseInput: Input;
   base: BaseFields | undefined;
+  baseStamp: number;
 }
 
 const CORE = Symbol("hono-cloudflare-logger.core");
@@ -51,28 +49,40 @@ interface InternalInit {
 }
 
 function isReservedKey(key: string): boolean {
-  return key === "level" || key === "msg" || key === "time" || key === "trace";
-}
-
-function assignSafe(target: Record<string, unknown>, source: Record<string, unknown>): void {
-  for (const key in source) {
-    if (!Object.hasOwn(source, key) || isReservedKey(key)) {
-      continue;
-    }
-
-    target[key] = source[key];
+  switch (key) {
+    case "level":
+    case "msg":
+    case "time":
+    case "trace_id":
+    case "data":
+    case "err":
+    case "req":
+      return true;
+    default:
+      return false;
   }
 }
 
-function resolveBase(core: LoggerCore): BaseFields {
-  const base = core.buildBase ? core.buildBase(core.baseInput, core.output) : {};
-  core.base = base;
-  return base;
+function assignSafe(target: Record<string, unknown>, source: LogData): void {
+  for (const key of Object.keys(source)) {
+    if (!isReservedKey(key)) {
+      target[key] = source[key];
+    }
+  }
+}
+
+function currentBase(core: LoggerCore): BaseFields {
+  const version = core.baseVersion ? core.baseVersion(core.baseInput) : 0;
+  if (core.base === undefined || version !== core.baseStamp) {
+    core.base = core.buildBase ? core.buildBase(core.baseInput, core.output) : {};
+    core.baseStamp = version;
+  }
+  return core.base;
 }
 
 export class Logger {
   private readonly core: LoggerCore;
-  private context: LogContext | undefined;
+  private context: LogData | undefined;
 
   constructor(options?: LoggerOptions);
   constructor(options: LoggerOptions | InternalInit = {}) {
@@ -88,102 +98,106 @@ export class Logger {
         minPriority: resolveLevelPriority(options.level, DEFAULT_LEVEL),
         output: resolveOutput(options),
         buildBase: undefined,
+        baseVersion: undefined,
         baseInput: undefined,
         base,
+        baseStamp: 0,
       };
     }
 
     this.context = undefined;
   }
 
-  setContext(context: LogContext): void {
+  /** Merges fields into every later entry from this logger. Reserved keys are ignored. */
+  setContext(context: LogData): void {
     const sanitized = sanitize(context, this.core.output.sanitize);
     this.context ??= {};
     assignSafe(this.context, sanitized);
   }
 
-  debug(msg: string, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("debug", 0, msg, data, undefined, options?.dataPlacement);
+  debug(msg: string, data?: LogData, options?: LogWriteOptions): void {
+    this.write(0, msg, data, undefined, options);
   }
 
-  info(msg: string, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("info", 1, msg, data, undefined, options?.dataPlacement);
+  info(msg: string, data?: LogData, options?: LogWriteOptions): void {
+    this.write(1, msg, data, undefined, options);
   }
 
-  notice(msg: string, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("notice", 2, msg, data, undefined, options?.dataPlacement);
+  notice(msg: string, data?: LogData, options?: LogWriteOptions): void {
+    this.write(2, msg, data, undefined, options);
   }
 
-  warning(msg: string, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("warning", 3, msg, data, undefined, options?.dataPlacement);
+  warning(msg: string, data?: LogData, options?: LogWriteOptions): void {
+    this.write(3, msg, data, undefined, options);
   }
 
-  error(msg: string, err?: Error, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("error", 4, msg, data, err, options?.dataPlacement);
+  /** `err` accepts anything that can be thrown, so `catch (error)` values work as-is. */
+  error(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void {
+    this.write(4, msg, data, err, options);
   }
 
-  critical(msg: string, err?: Error, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("critical", 5, msg, data, err, options?.dataPlacement);
+  critical(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void {
+    this.write(5, msg, data, err, options);
   }
 
-  alert(msg: string, err?: Error, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("alert", 6, msg, data, err, options?.dataPlacement);
+  alert(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void {
+    this.write(6, msg, data, err, options);
   }
 
-  emergency(msg: string, err?: Error, data?: LogContext, options?: LogWriteOptions): void {
-    this.write("emergency", 7, msg, data, err, options?.dataPlacement);
+  emergency(msg: string, err?: unknown, data?: LogData, options?: LogWriteOptions): void {
+    this.write(7, msg, data, err, options);
   }
 
   private write(
-    level: SyslogLevel,
-    levelPriority: number,
+    priority: number,
     msg: string,
-    data?: LogContext,
-    err?: Error,
-    dataPlacement: DataPlacement = "trace",
+    data: LogData | undefined,
+    err: unknown,
+    options: LogWriteOptions | undefined,
   ): void {
     const core = this.core;
-    if (levelPriority < core.minPriority) {
+    if (priority < core.minPriority) {
       return;
     }
 
     let entry: LogEntry | undefined;
     try {
       const output = core.output;
-      entry = { level, msg };
-      if (data && dataPlacement === "trace") {
-        entry.trace = sanitize(data, output.sanitize);
-      }
+      entry = {
+        level: SYSLOG_LEVELS[priority] as SyslogLevel,
+        msg: typeof msg === "string" ? msg : String(msg),
+      };
       if (output.timestamp) {
         entry.time = isoTimestamp();
       }
 
-      const base = core.base ?? resolveBase(core);
-      if (base.trace_id) {
+      const base = currentBase(core);
+      if (base.trace_id !== undefined) {
         entry.trace_id = base.trace_id;
       }
-      if (base.req) {
-        entry.req = base.req;
-      }
 
-      if (this.context) {
+      if (this.context !== undefined) {
         assignSafe(entry, this.context);
       }
 
-      if (data && dataPlacement === "flat") {
-        assignSafe(entry, sanitize(data, output.sanitize));
-      }
-
-      if (err instanceof Error) {
-        const errEntry: LogEntry["err"] = { message: err.message };
-        if (err.stack) {
-          errEntry.stack = err.stack;
+      if (data !== undefined) {
+        const sanitized = sanitize(data, output.sanitize);
+        if (options?.placement === "flat") {
+          assignSafe(entry, sanitized);
+        } else {
+          entry.data = sanitized;
         }
-
-        entry.err = errEntry;
       }
 
-      output.write(entry, levelPriority);
+      if (err !== undefined) {
+        entry.err = serializeErrorValue(err, output.sanitize);
+      }
+
+      if (base.req !== undefined) {
+        entry.req = base.req;
+      }
+
+      output.write(entry, priority);
     } catch (error) {
       reportWriteFailure(entry, error);
     }

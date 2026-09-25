@@ -1,4 +1,8 @@
+import { serializeError } from "./error.ts";
+import type { SerializedError } from "./types.ts";
+
 const MATCHER_CACHE_LIMIT = 512;
+const KEY_SEPARATORS = /[-_.\s]/g;
 
 export const DEFAULT_CENSOR = "[REDACTED]";
 export const DEFAULT_MAX_STRING_LENGTH = 8192;
@@ -7,16 +11,22 @@ export const DEFAULT_MAX_DEPTH = 10;
 const CIRCULAR = "[Circular]";
 const UNSERIALIZABLE = "[Unserializable]";
 
+/** Lowercases and drops separators, so `apiKey`, `api_key` and `API-KEY` compare equal. */
+export function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(KEY_SEPARATORS, "");
+}
+
 /**
- * Case-insensitive key matcher. Object keys are low-cardinality, so results
- * are memoized to avoid a `toLowerCase()` allocation for every visited key.
+ * Case- and separator-insensitive key matcher. Object keys are
+ * low-cardinality, so results are memoized per raw key to avoid normalizing
+ * every visited key.
  */
 export class KeyMatcher {
   private readonly normalized: ReadonlySet<string>;
   private readonly cache = new Map<string, boolean>();
 
   constructor(keys: readonly string[]) {
-    this.normalized = new Set(keys.map((key) => key.toLowerCase()));
+    this.normalized = new Set(keys.map(normalizeKey));
   }
 
   matches(key: string): boolean {
@@ -25,7 +35,7 @@ export class KeyMatcher {
       return cached;
     }
 
-    const result = this.normalized.has(key.toLowerCase());
+    const result = this.normalized.has(normalizeKey(key));
     if (this.cache.size >= MATCHER_CACHE_LIMIT) {
       this.cache.clear();
     }
@@ -178,6 +188,10 @@ function sanitizeObject(
       return sanitizeArray(value, options, nextDepth, ancestors);
     }
 
+    if (value instanceof Error) {
+      return serializeErrorValue(value, options);
+    }
+
     const toJSON = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === "function") {
       return sanitizeValue(toJSON.call(value), options, depth, ancestors);
@@ -253,4 +267,9 @@ function sanitizeValue(
  */
 export function sanitize<T>(value: T, options: SanitizeOptions): T {
   return sanitizeValue(value, options, 0, []) as T;
+}
+
+/** Serializes a thrown value, sanitizing any non-Error `cause` with the same options. */
+export function serializeErrorValue(value: unknown, options: SanitizeOptions): SerializedError {
+  return serializeError(value, (item) => sanitize(item, options), options.maxStringLength);
 }

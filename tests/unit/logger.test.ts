@@ -72,7 +72,7 @@ describe("Logger", () => {
     logger.warning("line\nbreak", { userId: "u-1" });
 
     const raw = String(spies.warn.mock.calls[0]?.[0]);
-    expect(raw).toBe('WARNING   line\\u000abreak trace={"userId":"u-1"}');
+    expect(raw).toBe('WARNING   line\\u000abreak data={"userId":"u-1"}');
   });
 
   it("omits time when timestamp is disabled", () => {
@@ -120,7 +120,7 @@ describe("Logger", () => {
     expect(() => new Logger({ maxStringLength: 0 })).toThrow(TypeError);
   });
 
-  it("merges mutable context with last write wins and nests call data under trace", () => {
+  it("merges mutable context with last write wins and nests call data under data", () => {
     const logger = new Logger({ level: "debug", traceId: "trace-1" });
 
     logger.setContext({ userId: "u-1", role: "user" });
@@ -133,7 +133,7 @@ describe("Logger", () => {
     expect(entry.role).toBe("admin");
     expect(entry.sessionId).toBe("s-1");
     expect(entry).not.toHaveProperty("route");
-    expect(entry.trace).toEqual({ route: "/login" });
+    expect(entry.data).toEqual({ route: "/login" });
   });
 
   it("redacts configured keys deeply and case-insensitively", () => {
@@ -145,10 +145,32 @@ describe("Logger", () => {
       arr: [{ Password: "case-insensitive" }],
     });
 
-    expect(onlyEntry(spies).trace).toEqual({
+    expect(onlyEntry(spies).data).toEqual({
       password: "[REDACTED]",
       nested: { token: "[REDACTED]", keep: true },
       arr: [{ Password: "[REDACTED]" }],
+    });
+  });
+
+  it("matches redact keys regardless of case and separators", () => {
+    const logger = new Logger({ redactKeys: ["apiKey", "access_token"] });
+
+    logger.info("separators", {
+      api_key: "a",
+      "API-KEY": "b",
+      apikey: "c",
+      accessToken: "d",
+      "access.token": "e",
+      keep: "f",
+    });
+
+    expect(onlyEntry(spies).data).toEqual({
+      api_key: "[REDACTED]",
+      "API-KEY": "[REDACTED]",
+      apikey: "[REDACTED]",
+      accessToken: "[REDACTED]",
+      "access.token": "[REDACTED]",
+      keep: "f",
     });
   });
 
@@ -157,7 +179,7 @@ describe("Logger", () => {
 
     logger.info("censor", { password: "plain" });
 
-    expect(onlyEntry(spies).trace).toEqual({ password: "***" });
+    expect(onlyEntry(spies).data).toEqual({ password: "***" });
   });
 
   it("does not mutate the caller's objects when redacting", () => {
@@ -176,7 +198,7 @@ describe("Logger", () => {
 
     logger.info("circular", circular);
 
-    expect(onlyEntry(spies).trace).toEqual({
+    expect(onlyEntry(spies).data).toEqual({
       token: "[REDACTED]",
       keep: 1,
       self: "[Circular]",
@@ -189,7 +211,7 @@ describe("Logger", () => {
 
     logger.info("shared", { a: shared, b: shared });
 
-    expect(onlyEntry(spies).trace).toEqual({ a: { id: 1 }, b: { id: 1 } });
+    expect(onlyEntry(spies).data).toEqual({ a: { id: 1 }, b: { id: 1 } });
   });
 
   it("converts values JSON cannot represent", () => {
@@ -209,7 +231,7 @@ describe("Logger", () => {
       url: new URL("https://example.com/path"),
     });
 
-    expect(onlyEntry(spies).trace).toEqual({
+    expect(onlyEntry(spies).data).toEqual({
       big: "10",
       map: { a: 1, "2": "b" },
       set: [1, 2],
@@ -229,7 +251,7 @@ describe("Logger", () => {
 
     logger.info("deep", deep);
 
-    const serialized = JSON.stringify(onlyEntry(spies).trace);
+    const serialized = JSON.stringify(onlyEntry(spies).data);
     expect(serialized).toContain('"[Object]"');
     expect(serialized).not.toContain("leaf");
   });
@@ -239,7 +261,7 @@ describe("Logger", () => {
 
     logger.info("long", { body: "x".repeat(25) });
 
-    expect(onlyEntry(spies).trace).toEqual({ body: `${"x".repeat(10)}…[truncated 15 chars]` });
+    expect(onlyEntry(spies).data).toEqual({ body: `${"x".repeat(10)}…[truncated 15 chars]` });
   });
 
   it("survives a throwing toJSON", () => {
@@ -252,30 +274,40 @@ describe("Logger", () => {
 
     logger.info("hostile", { hostile });
 
-    expect(onlyEntry(spies).trace).toEqual({ hostile: "[Unserializable]" });
+    expect(onlyEntry(spies).data).toEqual({ hostile: "[Unserializable]" });
   });
 
-  it("serializes Error with message and stack", () => {
+  it("serializes the error and keeps call data separate", () => {
     const logger = new Logger({ level: "debug" });
-    const err = new Error("boom");
 
-    logger.error("failed", err, { op: "create" });
+    logger.error("failed", new TypeError("boom"), { op: "create" });
 
     const entry = onlyEntry(spies);
-    const errorPart = entry.err as Record<string, unknown>;
-    expect(errorPart.message).toBe("boom");
-    expect(typeof errorPart.stack).toBe("string");
-    expect(entry.trace).toEqual({ op: "create" });
+    expect(entry.err).toMatchObject({ name: "TypeError", message: "boom" });
+    expect(typeof (entry.err as Record<string, unknown>).stack).toBe("string");
+    expect(entry.data).toEqual({ op: "create" });
+  });
+
+  it("accepts catch-clause values without casting", () => {
+    const logger = new Logger();
+
+    try {
+      throw "plain string";
+    } catch (error) {
+      logger.error("caught", error);
+    }
+
+    expect(onlyEntry(spies).err).toEqual({ name: "NonError", message: "plain string" });
   });
 
   it("supports explicit flat placement override", () => {
     const logger = new Logger({ level: "debug" });
 
-    logger.info("flat data", { status: 200 }, { dataPlacement: "flat" });
+    logger.info("flat data", { status: 200 }, { placement: "flat" });
 
     const entry = onlyEntry(spies);
     expect(entry.status).toBe(200);
-    expect(entry).not.toHaveProperty("trace");
+    expect(entry).not.toHaveProperty("data");
   });
 
   it("does not allow context or flat data to override level/msg/time", () => {
@@ -289,7 +321,7 @@ describe("Logger", () => {
     logger.info(
       "canonical",
       { level: "critical", msg: "flat-msg", time: "flat-time", status: 200 },
-      { dataPlacement: "flat" },
+      { placement: "flat" },
     );
 
     const entry = onlyEntry(spies);
@@ -300,16 +332,34 @@ describe("Logger", () => {
     expect(entry.status).toBe(200);
   });
 
-  it("serializes keys with level,msg,trace,time prefix when trace exists", () => {
+  it("orders keys level, msg, time, trace_id, context, data, err", () => {
     const logger = new Logger({ level: "debug", traceId: "trace-1" });
     logger.setContext({ userId: "u-1" });
 
-    logger.info("ordered trace", { route: "/login" });
+    logger.error("ordered", new Error("x"), { route: "/login" });
 
-    const keys = Object.keys(onlyEntry(spies));
-    expect(keys.slice(0, 4)).toEqual(["level", "msg", "trace", "time"]);
-    expect(keys.indexOf("trace_id")).toBeGreaterThan(3);
-    expect(keys.indexOf("userId")).toBeGreaterThan(3);
+    expect(Object.keys(onlyEntry(spies))).toEqual([
+      "level",
+      "msg",
+      "time",
+      "trace_id",
+      "userId",
+      "data",
+      "err",
+    ]);
+  });
+
+  it("ignores reserved keys in context and flat data", () => {
+    const logger = new Logger({ traceId: "real" });
+    logger.setContext({ trace_id: "fake", data: "fake", err: "fake", req: "fake" });
+
+    logger.info("reserved", { req: "flat-fake" }, { placement: "flat" });
+
+    const entry = onlyEntry(spies);
+    expect(entry.trace_id).toBe("real");
+    expect(entry).not.toHaveProperty("data");
+    expect(entry).not.toHaveProperty("err");
+    expect(entry).not.toHaveProperty("req");
   });
 
   it("reports but does not throw when writing fails unexpectedly", () => {

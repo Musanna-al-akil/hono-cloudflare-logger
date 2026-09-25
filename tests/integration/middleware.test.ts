@@ -57,7 +57,8 @@ describe("logger middleware", () => {
 
     expect(entry.trace_id).toBe("custom-trace");
     expect(req.method).toBe("GET");
-    expect(req.url).toBe("/trace");
+    expect(req.path).toBe("/trace");
+    expect(req.route).toBe("/trace");
     expect(req.cf).toEqual({ colo: "SJC", country: "US" });
   });
 
@@ -148,18 +149,91 @@ describe("logger middleware", () => {
 
   it("redacts configured header keys when header logging is enabled", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
-    app.use("*", logger({ header: true, redactKeys: ["authorization"] }));
+    app.use("*", logger({ header: true, redactKeys: ["x-tenant-secret"] }));
     app.get("/headers-redact", (c) => {
       c.get("logger").info("headers redact");
       return c.text("ok");
     });
 
     await app.request(
-      createRequest("/headers-redact", { headers: { authorization: "Bearer secret" } }),
+      createRequest("/headers-redact", { headers: { "x-tenant-secret": "s3cret", accept: "*/*" } }),
     );
 
     const req = onlyEntry(spies).req as Record<string, Record<string, unknown>>;
-    expect(req.headers?.authorization).toBe("[REDACTED]");
+    expect(req.headers?.["x-tenant-secret"]).toBe("[REDACTED]");
+    expect(req.headers?.accept).toBe("*/*");
+  });
+
+  it("always censors credential headers, even when allowlisted", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ header: ["authorization", "cookie", "x-api-key", "accept"] }));
+    app.get("/credentials", (c) => {
+      c.get("logger").info("credentials");
+      return c.text("ok");
+    });
+
+    await app.request(
+      createRequest("/credentials", {
+        headers: {
+          authorization: "Bearer secret",
+          cookie: "session=abc",
+          "x-api-key": "key",
+          accept: "text/plain",
+        },
+      }),
+    );
+
+    const req = onlyEntry(spies).req as Record<string, unknown>;
+    expect(req.headers).toEqual({
+      authorization: "[REDACTED]",
+      cookie: "[REDACTED]",
+      "x-api-key": "[REDACTED]",
+      accept: "text/plain",
+    });
+  });
+
+  it("records the matched route pattern alongside the concrete path", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("*", logger({ autoLogging: "access" }));
+    app.use("/users/*", async (c, next) => {
+      c.get("logger").debug("auth middleware");
+      c.get("logger").info("in middleware");
+      await next();
+    });
+    app.get("/users/:id", (c) => {
+      c.get("logger").info("in handler");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/users/42"));
+
+    const routes = loggedEntries(spies).map((entry) => [
+      entry.msg,
+      (entry.req as Record<string, unknown>).route,
+      (entry.req as Record<string, unknown>).path,
+    ]);
+    expect(routes).toEqual([
+      ["in middleware", "/users/*", "/users/42"],
+      ["in handler", "/users/:id", "/users/42"],
+      ["Request completed", "/users/:id", "/users/42"],
+    ]);
+  });
+
+  it("includes query parameters only when enabled, redacting sensitive keys", async () => {
+    const app = new Hono<{ Variables: LoggerVariables }>();
+    app.use("/with/*", logger({ query: true, redactKeys: ["token"] }));
+    app.use("/without/*", logger());
+    app.get("*", (c) => {
+      c.get("logger").info("query");
+      return c.text("ok");
+    });
+
+    await app.request(createRequest("/with/q?page=2&token=abc"));
+    await app.request(createRequest("/without/q?page=2"));
+
+    const [withQuery, withoutQuery] = loggedEntries(spies);
+    expect(withQuery?.req).toMatchObject({ query: { page: "2", token: "[REDACTED]" } });
+    expect(withoutQuery?.req).not.toHaveProperty("query");
   });
 
   it("includes only allowlisted request headers", async () => {
@@ -193,7 +267,7 @@ describe("logger middleware", () => {
     expect(entry.level).toBe("info");
     expect(entry.status).toBe(201);
     expect(typeof entry.duration_ms).toBe("number");
-    expect(entry).not.toHaveProperty("trace");
+    expect(entry).not.toHaveProperty("data");
     expect(Object.keys(entry).slice(0, 3)).toEqual(["level", "msg", "time"]);
   });
 
@@ -261,7 +335,7 @@ describe("logger middleware", () => {
     expect(waitUntil.mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
-  it("nests route-level payload under trace", async () => {
+  it("nests route-level payload under data", async () => {
     const app = new Hono<{ Variables: LoggerVariables }>();
     app.use("*", logger());
     app.get("/custom-payload", (c) => {
@@ -272,7 +346,7 @@ describe("logger middleware", () => {
     await app.request(createRequest("/custom-payload"));
 
     const entry = onlyEntry(spies);
-    expect(entry.trace).toEqual({ name: "John Doe", age: 30 });
+    expect(entry.data).toEqual({ name: "John Doe", age: 30 });
     expect(entry).not.toHaveProperty("name");
   });
 });

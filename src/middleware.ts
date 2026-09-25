@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { routePath } from "hono/route";
 import { resolveLevelPriority, resolveOutput, type ResolvedOutput } from "./config.ts";
 import { DEFAULT_LEVEL } from "./levels.ts";
 import { createLoggerFromCore, type BaseFields } from "./logger.ts";
@@ -7,8 +8,16 @@ import { reportWriteFailure } from "./sink.ts";
 import type { LoggerConfig, RequestMetadata } from "./types.ts";
 
 const DEFAULT_TRACE_HEADER = "X-Request-Id";
-const DEFAULT_AUTO_LOGGING = "silent";
-const DEFAULT_INCLUDE_HEADERS = false;
+
+/** Credentials that never belong in logs, whatever the header options say. */
+const SENSITIVE_HEADERS: ReadonlySet<string> = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "cf-access-jwt-assertion",
+]);
 
 /** Configuration normalized once per `logger()` call instead of once per request. */
 interface ResolvedConfig {
@@ -16,6 +25,7 @@ interface ResolvedConfig {
   readonly includeCfProperties: readonly string[];
   /** `true` captures every header, a list captures lowercased allowlisted names. */
   readonly headers: boolean | readonly string[];
+  readonly query: boolean;
 }
 
 function pickCfProperties(
@@ -43,6 +53,7 @@ function pickCfProperties(
 function pickRequestHeaders(
   rawHeaders: Headers,
   headers: boolean | readonly string[],
+  censor: string,
 ): Record<string, string> | undefined {
   if (headers === false) {
     return undefined;
@@ -53,20 +64,27 @@ function pickRequestHeaders(
 
   if (headers === true) {
     rawHeaders.forEach((value, key) => {
-      picked[key] = value;
+      picked[key] = SENSITIVE_HEADERS.has(key) ? censor : value;
       hasHeaders = true;
     });
   } else {
     for (const key of headers) {
       const value = rawHeaders.get(key);
       if (value !== null) {
-        picked[key] = value;
+        picked[key] = SENSITIVE_HEADERS.has(key) ? censor : value;
         hasHeaders = true;
       }
     }
   }
 
   return hasHeaders ? picked : undefined;
+}
+
+function hasKeys(record: Record<string, unknown>): boolean {
+  for (const _key in record) {
+    return true;
+  }
+  return false;
 }
 
 function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput): BaseFields {
@@ -78,9 +96,22 @@ function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput)
 
   const req: RequestMetadata = {
     method: c.req.method,
-    url: c.req.path,
+    path: c.req.path,
   };
-  const headers = pickRequestHeaders(c.req.raw.headers, resolved.headers);
+
+  const route = routePath(c);
+  if (route) {
+    req.route = route;
+  }
+
+  if (resolved.query) {
+    const query = c.req.query();
+    if (hasKeys(query)) {
+      req.query = query;
+    }
+  }
+
+  const headers = pickRequestHeaders(c.req.raw.headers, resolved.headers, output.sanitize.censor);
   if (headers) {
     req.headers = headers;
   }
@@ -92,6 +123,11 @@ function buildBase(resolved: ResolvedConfig, c: Context, output: ResolvedOutput)
 
   base.req = sanitize(req, output.sanitize);
   return base;
+}
+
+/** Hono advances `routeIndex` as it moves through middleware to the handler. */
+function routeVersion(c: Context): number {
+  return c.req.routeIndex;
 }
 
 /** Runs `flush` after the response via `waitUntil`, or detached outside Workers. */
@@ -108,36 +144,34 @@ function scheduleFlush(c: Context, flush: () => Promise<void>): void {
 }
 
 export function logger(config: LoggerConfig = {}): MiddlewareHandler {
-  const {
-    traceHeader = DEFAULT_TRACE_HEADER,
-    autoLogging = DEFAULT_AUTO_LOGGING,
-    includeCfProperties = [],
-    header = DEFAULT_INCLUDE_HEADERS,
-  } = config;
+  const { traceHeader = DEFAULT_TRACE_HEADER, autoLogging = "silent", header = false } = config;
 
   const minPriority = resolveLevelPriority(config.level, DEFAULT_LEVEL);
   const output = resolveOutput(config);
   const resolved: ResolvedConfig = {
     traceHeader,
-    includeCfProperties: [...includeCfProperties],
+    includeCfProperties: [...(config.includeCfProperties ?? [])],
     headers: typeof header === "boolean" ? header : header.map((name) => name.toLowerCase()),
+    query: config.query ?? false,
   };
   const buildRequestBase = (c: Context, requestOutput: ResolvedOutput): BaseFields =>
     buildBase(resolved, c, requestOutput);
 
+  const createRequestLogger = (c: Context) =>
+    createLoggerFromCore({
+      minPriority,
+      output,
+      buildBase: buildRequestBase,
+      baseVersion: routeVersion,
+      baseInput: c,
+      base: undefined,
+      baseStamp: 0,
+    });
+
   if (autoLogging === "silent" && !output.flush) {
     // Nothing happens after the handler, so skip the timer and the extra async frame.
     return (c, next) => {
-      c.set(
-        "logger",
-        createLoggerFromCore({
-          minPriority,
-          output,
-          buildBase: buildRequestBase,
-          baseInput: c,
-          base: undefined,
-        }) as never,
-      );
+      c.set("logger", createRequestLogger(c) as never);
       return next();
     };
   }
@@ -146,14 +180,7 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
     const startTime = Date.now();
     let thrownError: unknown;
 
-    const requestLogger = createLoggerFromCore({
-      minPriority,
-      output,
-      buildBase: buildRequestBase,
-      baseInput: c,
-      base: undefined,
-    });
-
+    const requestLogger = createRequestLogger(c);
     c.set("logger", requestLogger as never);
 
     try {
@@ -165,38 +192,27 @@ export function logger(config: LoggerConfig = {}): MiddlewareHandler {
     const durationMs = Date.now() - startTime;
     const status = c.res.status;
 
-    if (autoLogging === "silent") {
-      // Only reached when a sink needs flushing.
-    } else if (autoLogging === "access") {
+    if (autoLogging === "access") {
       requestLogger.info(
         "Request completed",
-        {
-          status,
-          duration_ms: durationMs,
-        },
-        { dataPlacement: "flat" },
+        { status, duration_ms: durationMs },
+        { placement: "flat" },
       );
-    } else {
-      const runtimeError = thrownError ?? (c as { error?: unknown }).error;
+    } else if (autoLogging === "error") {
+      const runtimeError = thrownError ?? c.error;
       if (runtimeError) {
-        const err = runtimeError instanceof Error ? runtimeError : undefined;
         requestLogger.error(
           "Unhandled error",
-          err,
+          runtimeError,
           { duration_ms: durationMs },
-          {
-            dataPlacement: "flat",
-          },
+          { placement: "flat" },
         );
       } else if (status >= 500) {
         requestLogger.error(
           "Request failed",
           undefined,
-          {
-            status,
-            duration_ms: durationMs,
-          },
-          { dataPlacement: "flat" },
+          { status, duration_ms: durationMs },
+          { placement: "flat" },
         );
       }
     }
