@@ -60,6 +60,23 @@ export function createKeyMatcher(keys: readonly string[]): KeyMatcher | undefine
   return matcher;
 }
 
+/**
+ * Sets an own enumerable property. Plain assignment of a `__proto__` key (e.g.
+ * from `JSON.parse` of user input) would change the prototype instead.
+ */
+export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  } else {
+    target[key] = value;
+  }
+}
+
 export interface SanitizeOptions {
   readonly matcher: KeyMatcher | undefined;
   readonly censor: string;
@@ -154,12 +171,12 @@ function sanitizeRecord(
       clone = {};
       for (let previous = 0; previous < index; previous += 1) {
         const previousKey = keys[previous] as string;
-        clone[previousKey] = source[previousKey];
+        setOwn(clone, previousKey, source[previousKey]);
       }
     }
 
     if (sanitized !== undefined) {
-      clone[key] = sanitized;
+      setOwn(clone, key, sanitized);
     }
   }
 
@@ -200,7 +217,7 @@ function sanitizeObject(
     if (value instanceof Map) {
       const record: Record<string, unknown> = {};
       for (const [key, item] of value) {
-        record[String(key)] = item;
+        setOwn(record, String(key), item);
       }
       return sanitizeRecord(record, options, nextDepth, ancestors, false);
     }
@@ -216,7 +233,7 @@ function sanitizeObject(
     if (typeof Headers !== "undefined" && value instanceof Headers) {
       const record: Record<string, unknown> = {};
       value.forEach((item, key) => {
-        record[key] = item;
+        setOwn(record, key, item);
       });
       return sanitizeRecord(record, options, nextDepth, ancestors, false);
     }

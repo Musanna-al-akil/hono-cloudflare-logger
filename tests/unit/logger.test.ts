@@ -339,6 +339,24 @@ describe("Logger", () => {
     expect(Object.keys(context ?? {})).toEqual(["level", "msg", "time"]);
   });
 
+  it("logs an own __proto__ key as data instead of changing the prototype", () => {
+    const logger = new Logger();
+    const parse = () => JSON.parse('{"__proto__":{"injected":1},"n":1}') as Record<string, unknown>;
+
+    logger.info("flat", parse(), { placement: "flat" });
+    logger.info("copied", { ...parse(), big: 1n });
+    logger.setContext(parse());
+    logger.info("context");
+
+    const [flat, copied, context] = spies.info.mock.calls.map(([entry]) => entry as LogEntry);
+    for (const entry of [flat, copied?.data as LogEntry, context]) {
+      expect(Object.getPrototypeOf(entry)).toBe(Object.prototype);
+      expect(Object.hasOwn(entry ?? {}, "__proto__")).toBe(true);
+      expect((entry as { injected?: unknown }).injected).toBeUndefined();
+    }
+    expect(JSON.stringify(copied)).toContain('"__proto__":{"injected":1}');
+  });
+
   it("does not allow context or flat data to override level/msg/time", () => {
     const logger = new Logger({ level: "debug" });
     logger.setContext({

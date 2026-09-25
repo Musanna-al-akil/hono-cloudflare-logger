@@ -10,7 +10,7 @@ import {
   SYSLOG_LEVELS,
   WARNING_LEVEL_PRIORITY,
 } from "./levels.ts";
-import { sanitize, serializeErrorValue } from "./sanitize.ts";
+import { sanitize, serializeErrorValue, setOwn } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { isoTimestamp } from "./time.ts";
 import type { LogData, LogEntry, LogWriteOptions, RequestMetadata, SyslogLevel } from "./types.ts";
@@ -166,7 +166,7 @@ function assignSafe(target: Record<string, unknown>, source: unknown): void {
   }
   for (const key of Object.keys(source)) {
     if (!isReservedKey(key)) {
-      target[key] = source[key];
+      setOwn(target, key, source[key]);
     }
   }
 }
