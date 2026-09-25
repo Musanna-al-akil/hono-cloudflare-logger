@@ -99,6 +99,7 @@ copies of hono, which silently breaks `getLogger()`.
 ## Releases
 
 - Changesets in prerelease mode (`beta`). `npm run version-packages` bumps `package.json`, `jsr.json` (via `scripts/sync-jsr-version.mjs`) and `CHANGELOG.md`.
+- Changesets already released in a beta live in `.changeset/pre/`. Keep them: `changeset pre exit` uses them to write the combined notes for the stable release.
 - Tags: `vX.Y.Z-beta.N` publishes to npm under the `beta` dist-tag, and any `v*` tag publishes to JSR. Both workflows check that the tag, `package.json` and `jsr.json` versions match.
 - Don't push, tag or publish unless the maintainer asks.
 

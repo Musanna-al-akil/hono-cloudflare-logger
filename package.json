@@ -72,7 +72,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.3",
     "@cloudflare/vitest-plugin": "^1.2.7",
     "@types/node": "^22.20.4",
     "@vitest/coverage-v8": "^4.1.11",
