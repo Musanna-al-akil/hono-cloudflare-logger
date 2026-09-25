@@ -1,4 +1,4 @@
-import type { Logger } from "./logger.ts";
+import "./augment.ts";
 
 export { createLogger, Logger, type LoggerOptions } from "./logger.ts";
 export { logger } from "./middleware.ts";
@@ -22,10 +22,3 @@ export type {
   SerializedError,
   SyslogLevel,
 } from "./types.ts";
-
-declare module "hono" {
-  interface ContextVariableMap {
-    /** Request-scoped logger set by the `logger()` middleware. */
-    logger: Logger;
-  }
-}
