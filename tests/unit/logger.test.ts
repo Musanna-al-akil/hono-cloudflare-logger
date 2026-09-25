@@ -357,6 +357,14 @@ describe("Logger", () => {
     expect(JSON.stringify(copied)).toContain('"__proto__":{"injected":1}');
   });
 
+  it("truncates long messages like other strings", () => {
+    const logger = new Logger({ maxStringLength: 10 });
+
+    logger.info("x".repeat(50));
+
+    expect(onlyEntry(spies).msg).toBe(`${"x".repeat(10)}…[truncated 40 chars]`);
+  });
+
   it("does not allow context or flat data to override level/msg/time", () => {
     const logger = new Logger({ level: "debug" });
     logger.setContext({

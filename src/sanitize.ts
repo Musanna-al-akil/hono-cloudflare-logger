@@ -84,7 +84,7 @@ export interface SanitizeOptions {
   readonly maxDepth: number;
 }
 
-function truncate(value: string, maxLength: number): string {
+export function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength)}…[truncated ${value.length - maxLength} chars]`;
 }
 

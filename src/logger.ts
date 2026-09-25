@@ -10,7 +10,7 @@ import {
   SYSLOG_LEVELS,
   WARNING_LEVEL_PRIORITY,
 } from "./levels.ts";
-import { sanitize, serializeErrorValue, setOwn } from "./sanitize.ts";
+import { sanitize, serializeErrorValue, setOwn, truncate } from "./sanitize.ts";
 import { reportWriteFailure } from "./sink.ts";
 import { isoTimestamp } from "./time.ts";
 import type { LogData, LogEntry, LogWriteOptions, RequestMetadata, SyslogLevel } from "./types.ts";
@@ -305,9 +305,14 @@ export class Logger {
     let entry: LogEntry | undefined;
     try {
       const output = core.output;
+      const maxStringLength = output.sanitize.maxStringLength;
+      let text = typeof msg === "string" ? msg : String(msg);
+      if (text.length > maxStringLength) {
+        text = truncate(text, maxStringLength);
+      }
       entry = {
         level: SYSLOG_LEVELS[priority] as SyslogLevel,
-        msg: typeof msg === "string" ? msg : String(msg),
+        msg: text,
       };
       if (output.timestamp) {
         entry.time = isoTimestamp();

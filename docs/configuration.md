@@ -74,7 +74,7 @@ headers are captured.
 | ----------------- | ------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `redactKeys`      | `readonly string[]` | `[]`           | Keys whose values are replaced at any depth. Matching ignores case and `-`, `_`, `.` and spaces: `apiKey` matches `api_key`, `API-KEY` and `apikey`. |
 | `censor`          | `string`            | `"[REDACTED]"` | Replacement for redacted values and censored headers.                                                                                                |
-| `maxStringLength` | `number`            | `8192`         | Longer strings are cut and marked `…[truncated N chars]`. Workers Logs truncates events over 256 KB.                                                 |
+| `maxStringLength` | `number`            | `8192`         | Longer strings, including `msg`, are cut and marked `…[truncated N chars]`. Workers Logs truncates events over 256 KB.                               |
 
 Every entry is made safe to write whatever the options are:
 
